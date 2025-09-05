@@ -31,10 +31,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { calculateDuration } from "@/lib/utils";
 
 const PARTS_STORAGE_KEY = 'press-shop-optimizer-parts';
+// Original plan keys
 const PLAN_STORAGE_KEY = 'press-shop-optimizer-plan';
-const INSIGHTS_STORAGE_KEY = 'press-shop-optimizer-insights';
-const DISCREPANCY_REPORT_STORAGE_KEY = 'press-shop-optimizer-discrepancy-report';
 const PLAN_CONFIG_STORAGE_KEY = 'press-shop-optimizer-plan-config';
+// Adjusted plan keys to prevent state bleeding
+const ADJUSTED_PLAN_STORAGE_KEY = 'press-shop-optimizer-adjusted-plan';
+const ADJUSTED_INSIGHTS_STORAGE_KEY = 'press-shop-optimizer-adjusted-insights';
+const ADJUSTED_DISCREPANCY_REPORT_STORAGE_KEY = 'press-shop-optimizer-adjusted-discrepancy-report';
+const ADJUSTED_PLAN_CONFIG_STORAGE_KEY = 'press-shop-optimizer-adjusted-plan-config';
 
 
 export default function DowntimePlannerPage() {
@@ -43,9 +47,13 @@ export default function DowntimePlannerPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
-  const [plan, setPlan] = useState<ProductionPlan | null>(null);
-  const [insights, setInsights] = useState<PlanInsights | null>(null);
-  const [discrepancyReport, setDiscrepancyReport] = useState<DiscrepancyReport | null>(null);
+  // This state holds the original plan that will be adjusted
+  const [originalPlan, setOriginalPlan] = useState<ProductionPlan | null>(null);
+  
+  // This state holds the NEW, adjusted plan
+  const [adjustedPlan, setAdjustedPlan] = useState<ProductionPlan | null>(null);
+  const [adjustedInsights, setAdjustedInsights] = useState<PlanInsights | null>(null);
+  const [adjustedDiscrepancyReport, setAdjustedDiscrepancyReport] = useState<DiscrepancyReport | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [shiftDuration, setShiftDuration] = useState(0);
   const [shiftStartTime, setShiftStartTime] = useState("09:00");
@@ -61,6 +69,7 @@ export default function DowntimePlannerPage() {
 
   useEffect(() => {
     try {
+      // --- Load data for the original plan ---
       const savedMasterParts = window.localStorage.getItem(PARTS_STORAGE_KEY);
       const allParts = savedMasterParts ? JSON.parse(savedMasterParts) : [];
       setMasterPartsList(allParts);
@@ -68,19 +77,27 @@ export default function DowntimePlannerPage() {
       const savedPlanConfig = window.localStorage.getItem(PLAN_CONFIG_STORAGE_KEY);
       const planConfig = savedPlanConfig ? JSON.parse(savedPlanConfig) : {};
       
-      setPartsForPlan(planConfig.partsData ? planConfig.partsData.map((p: any, i: number) => ({...p, id: p.id || `part-${i}`, actualQuantityProduced: 0 })) : []);
-      setMachines(planConfig.machinesData || initialMachines);
-      setShiftDuration(planConfig.productionShiftDuration || 0);
-      setShiftStartTime(planConfig.startTime || "09:00");
-
-      const savedPlan = window.localStorage.getItem(PLAN_STORAGE_KEY);
-      setPlan(savedPlan ? JSON.parse(savedPlan) : null);
+      const savedOriginalPlan = window.localStorage.getItem(PLAN_STORAGE_KEY);
+      setOriginalPlan(savedOriginalPlan ? JSON.parse(savedOriginalPlan) : null);
       
-      const savedInsights = window.localStorage.getItem(INSIGHTS_STORAGE_KEY);
-      setInsights(savedInsights ? JSON.parse(savedInsights) : null);
+      // --- Load data for the adjusted plan (or initialize from the original) ---
+      const savedAdjustedPlan = window.localStorage.getItem(ADJUSTED_PLAN_STORAGE_KEY);
+      setAdjustedPlan(savedAdjustedPlan ? JSON.parse(savedAdjustedPlan) : null);
 
-      const savedDiscrepancyReport = window.localStorage.getItem(DISCREPANCY_REPORT_STORAGE_KEY);
-      setDiscrepancyReport(savedDiscrepancyReport ? JSON.parse(savedDiscrepancyReport) : null);
+      const savedAdjustedInsights = window.localStorage.getItem(ADJUSTED_INSIGHTS_STORAGE_KEY);
+      setAdjustedInsights(savedAdjustedInsights ? JSON.parse(savedAdjustedInsights) : null);
+      
+      const savedAdjustedDiscrepancyReport = window.localStorage.getItem(ADJUSTED_DISCREPANCY_REPORT_STORAGE_KEY);
+      setAdjustedDiscrepancyReport(savedAdjustedDiscrepancyReport ? JSON.parse(savedAdjustedDiscrepancyReport) : null);
+      
+      const savedAdjustedConfig = window.localStorage.getItem(ADJUSTED_PLAN_CONFIG_STORAGE_KEY);
+      const configToLoad = savedAdjustedConfig ? JSON.parse(savedAdjustedConfig) : planConfig;
+
+      setPartsForPlan(configToLoad.partsData ? configToLoad.partsData.map((p: any, i: number) => ({...p, id: p.id || `part-${i}`, actualQuantityProduced: p.actualQuantityProduced || 0 })) : []);
+      setMachines(configToLoad.machinesData || initialMachines);
+      setShiftDuration(configToLoad.productionShiftDuration || 0);
+      setShiftStartTime(configToLoad.startTime || "09:00");
+
 
     } catch (error) {
       console.error("Failed to load data from localStorage", error);
@@ -103,7 +120,7 @@ export default function DowntimePlannerPage() {
     async (options: { replanTime: string }) => {
       setIsLoading(true);
 
-      if (!plan) {
+      if (!originalPlan) {
          toast({
           variant: "destructive",
           title: "No Active Plan",
@@ -145,7 +162,7 @@ export default function DowntimePlannerPage() {
         machinesData: machinesForPlan, 
         productionShiftDuration: shiftDuration,
         elapsedTimeSinceShiftStart,
-        currentProductionPlan: plan,
+        currentProductionPlan: originalPlan,
       };
 
       const result = await getAdjustedProductionPlan(input as any);
@@ -157,33 +174,34 @@ export default function DowntimePlannerPage() {
           description: result.error,
         });
       } else if (result.data) {
-        setPlan(result.data.plan);
-        setInsights(result.data.insights);
-        setDiscrepancyReport(result.data.discrepancyReport);
+        setAdjustedPlan(result.data.plan);
+        setAdjustedInsights(result.data.insights);
+        setAdjustedDiscrepancyReport(result.data.discrepancyReport);
 
         toast({
           title: "Plan Adjusted & Saved",
           description: "Production plan has been re-generated and saved.",
         });
         
-        window.localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(result.data.plan));
-        window.localStorage.setItem(INSIGHTS_STORAGE_KEY, JSON.stringify(result.data.insights));
+        // Save to the new, separate storage keys
+        window.localStorage.setItem(ADJUSTED_PLAN_STORAGE_KEY, JSON.stringify(result.data.plan));
+        window.localStorage.setItem(ADJUSTED_INSIGHTS_STORAGE_KEY, JSON.stringify(result.data.insights));
         if (result.data.discrepancyReport) {
-            window.localStorage.setItem(DISCREPANCY_REPORT_STORAGE_KEY, JSON.stringify(result.data.discrepancyReport));
+            window.localStorage.setItem(ADJUSTED_DISCREPANCY_REPORT_STORAGE_KEY, JSON.stringify(result.data.discrepancyReport));
         }
 
-        const currentConfig = JSON.parse(window.localStorage.getItem(PLAN_CONFIG_STORAGE_KEY) || '{}');
         const updatedConfig = {
-            ...currentConfig,
             partsData: partsForPlan,
             machinesData: machines,
+            productionShiftDuration: shiftDuration,
+            startTime: shiftStartTime,
         };
-        window.localStorage.setItem(PLAN_CONFIG_STORAGE_KEY, JSON.stringify(updatedConfig));
+        window.localStorage.setItem(ADJUSTED_PLAN_CONFIG_STORAGE_KEY, JSON.stringify(updatedConfig));
       }
 
       setIsLoading(false);
     },
-    [partsForPlan, machines, toast, plan, shiftStartTime, shiftDuration]
+    [partsForPlan, machines, toast, originalPlan, shiftStartTime, shiftDuration]
   );
   
   const handleDragEnd = (event: DragEndEvent) => {
@@ -200,24 +218,23 @@ export default function DowntimePlannerPage() {
   }
 
   const handleResetPlan = useCallback(() => {
-    // In downtime planner, reset should probably just reset the changes, not the whole plan.
-    // For now, it reloads the initial state from storage.
     setIsLoading(true);
+    // Clear the *adjusted* plan state and localStorage
+    setAdjustedPlan(null);
+    setAdjustedInsights(null);
+    setAdjustedDiscrepancyReport(null);
+    window.localStorage.removeItem(ADJUSTED_PLAN_STORAGE_KEY);
+    window.localStorage.removeItem(ADJUSTED_INSIGHTS_STORAGE_KEY);
+    window.localStorage.removeItem(ADJUSTED_DISCREPANCY_REPORT_STORAGE_KEY);
+    window.localStorage.removeItem(ADJUSTED_PLAN_CONFIG_STORAGE_KEY);
+
+    // Reload the original plan config to reset the UI form state
     try {
         const savedPlanConfig = window.localStorage.getItem(PLAN_CONFIG_STORAGE_KEY);
         const planConfig = savedPlanConfig ? JSON.parse(savedPlanConfig) : {};
         
-        setPartsForPlan(planConfig.partsData ? planConfig.partsData.map((p: any, i: number) => ({...p, id: p.id || `part-${i}`, actualQuantityProduced: 0})) : []);
+        setPartsForPlan(planConfig.partsData ? planConfig.partsData.map((p: any, i: number) => ({...p, id: p.id || `part-${i}`, actualQuantityProduced: 0 })) : []);
         setMachines(planConfig.machinesData || initialMachines);
-
-        const savedPlan = window.localStorage.getItem(PLAN_STORAGE_KEY);
-        setPlan(savedPlan ? JSON.parse(savedPlan) : null);
-        
-        const savedInsights = window.localStorage.getItem(INSIGHTS_STORAGE_KEY);
-        setInsights(savedInsights ? JSON.parse(savedInsights) : null);
-
-        const savedDiscrepancyReport = window.localStorage.getItem(DISCREPANCY_REPORT_STORAGE_KEY);
-        setDiscrepancyReport(savedDiscrepancyReport ? JSON.parse(savedDiscrepancyReport) : null);
         
          toast({
             title: "Changes Reset",
@@ -252,7 +269,7 @@ export default function DowntimePlannerPage() {
       )
   }
   
-  if (!plan) {
+  if (!originalPlan) {
       return (
         <div className="flex flex-col h-screen bg-background">
             <AppHeader />
@@ -295,9 +312,9 @@ export default function DowntimePlannerPage() {
                             masterPartsList={masterPartsList}
                             onPartSelectionChange={handlePartSelectionChange}
                             isAdjustingPlan={true}
-                            plan={plan}
-                            insights={insights}
-                            discrepancyReport={discrepancyReport}
+                            plan={adjustedPlan}
+                            insights={adjustedInsights}
+                            discrepancyReport={adjustedDiscrepancyReport}
                             shiftDuration={shiftDuration}
                             shiftStartTime={shiftStartTime}
                         />

@@ -120,7 +120,7 @@ You will be given the original plan, a full list of parts (including priorities 
     *   **10 minutes** for machines with capacity <= 50T.
     *   **15 minutes** for machines with capacity > 50T.
 6.  **Handle Downtime:** Account for any machine 'downtimeDuration' specified in 'machinesData', which starts from minute 0 of the shift.
-7.  **Mandatory Break:** Remember the mandatory 30-minute break in the middle of the shift. No tasks should be scheduled during this window.
+7.  **Mandatory Break:** There is a mandatory 30-minute break for all machines. This break MUST be scheduled exactly in the middle of the provided 'productionShiftDuration'. First, calculate the midpoint of the shift as \`midpoint = productionShiftDuration / 2\`. The break window is from \`midpoint - 15\` minutes to \`midpoint + 15\` minutes. **NO TASK** can be scheduled that starts, ends, or runs within this 30-minute window for any machine. You must use the provided \`productionShiftDuration\` for this calculation, not a hardcoded value. This is a non-negotiable rule.
 8.  **Output Format:**
     *   The 'productionPlan' array must contain **both** the preserved "locked" tasks from the original plan and the newly scheduled tasks for the remainder of the shift.
     *   The 'summary' MUST be a concise, point-by-point list explaining the adjustments. Use a hyphen (-) for each bullet point. It should clearly state:
