@@ -313,81 +313,57 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
             pattern: 'none'
         };
     };
-    
-    const timeIntervals = useMemo(() => {
-        const intervals = [];
-        const totalHours = shiftDuration / 60;
-        for (let i = 0; i <= totalHours; i++) {
-            intervals.push(i);
-        }
-        return intervals;
-    }, [shiftDuration]);
 
     return (
-        <div className="border rounded-lg bg-card overflow-x-auto">
-            <div className="relative">
-                <div className="grid grid-cols-[160px_1fr] divide-x">
-                    <div className="sticky left-0 bg-muted/50 z-10 font-semibold">
-                        <div className="h-12 flex items-center px-4 border-b">Machine</div>
-                        {machines.map((machine, index) => (
-                             <div key={`${machine.machineName}-${index}`} className={cn("flex items-center px-4 h-24 border-b", index === machines.length - 1 && "border-b-0")}>
-                                {machine.machineName}
-                             </div>
-                        ))}
-                    </div>
-                     <div>
-                        <div className="h-12 border-b relative">
-                            {timeIntervals.map(hour => (
-                                <div 
-                                    key={hour}
-                                    className="absolute top-0 h-full text-center text-xs text-muted-foreground border-r"
-                                    style={{
-                                        left: `${(hour * 60 / shiftDuration) * 100}%`,
-                                        width: `${(60 / shiftDuration) * 100}%`
-                                    }}
-                                >
-                                    <span className="absolute top-1/2 -translate-y-1/2 left-2">{formatTime(hour * 60)}</span>
-                                </div>
-                            ))}
-                        </div>
-                         {machines.map((machine, index) => (
-                             <div key={`${machine.machineName}-${index}`} className={cn("relative h-24 border-b", index === machines.length - 1 && "border-b-0")}>
-                                 
-                                     {productionPlan
-                                        .filter(item => item.machineName === machine.machineName)
-                                        .map((item, itemIndex) => {
-                                            const colors = getPartColor(item.partName, item.taskType);
-                                            const uniqueKey = `${item.machineName}-${item.partName}-${item.operationName}-${item.startTime}-${itemIndex}`;
-                                            const left = (item.startTime / shiftDuration) * 100;
-                                            const width = ((item.endTime - item.startTime) / shiftDuration) * 100;
+        <div className="border rounded-lg bg-card">
+            <div className="grid grid-cols-[160px_1fr] divide-x">
+                <div className="sticky left-0 bg-muted/50 z-10 font-semibold text-sm">
+                    {machines.map((machine, index) => (
+                         <div key={`${machine.machineName}-${index}`} className="flex items-center px-4 h-24 border-b">
+                            {machine.machineName}
+                         </div>
+                    ))}
+                </div>
+                 <div className="overflow-x-auto">
+                     {machines.map((machine, index) => (
+                         <div key={`${machine.machineName}-${index}`} className="relative h-24 border-b flex items-center p-2">
+                             <div className="flex flex-nowrap gap-2">
+                                 {productionPlan
+                                    .filter(item => item.machineName === machine.machineName)
+                                    .sort((a,b) => a.startTime - b.startTime)
+                                    .map((item, itemIndex) => {
+                                        const colors = getPartColor(item.partName, item.taskType);
+                                        const uniqueKey = `${item.machineName}-${item.partName}-${item.operationName}-${item.startTime}-${itemIndex}`;
+                                        const duration = item.endTime - item.startTime;
 
-                                            return (
-                                                <div
-                                                    key={uniqueKey}
-                                                    className="absolute top-2 bottom-2 rounded-md p-2 shadow-sm border text-xs overflow-hidden"
-                                                    style={{
-                                                        left: `${left}%`,
-                                                        width: `${width}%`,
-                                                        backgroundColor: colors.background,
-                                                        borderColor: colors.border,
-                                                        backgroundImage: colors.pattern,
-                                                    }}
-                                                >
+                                        return (
+                                            <div
+                                                key={uniqueKey}
+                                                className="w-48 h-full rounded-md p-2 shadow-sm border text-xs flex flex-col justify-between"
+                                                style={{
+                                                    backgroundColor: colors.background,
+                                                    borderColor: colors.border,
+                                                    backgroundImage: colors.pattern,
+                                                }}
+                                            >
+                                                <div>
                                                     <p className="font-bold whitespace-nowrap">{item.partName}</p>
                                                     <p className="text-muted-foreground whitespace-nowrap">
                                                         {item.taskType === 'Die Setting' ? 'Die Setting' : item.operationName}
                                                     </p>
-                                                    <div className="space-y-1 mt-1">
-                                                        {item.taskType === 'Production' && (
-                                                            <p className="font-mono text-primary whitespace-nowrap">Qty: {item.quantity}</p>
-                                                        )}
-                                                    </div>
                                                 </div>
-                                            );
-                                        })}
-                             </div>
-                         ))}
-                    </div>
+                                                <div className="space-y-1 mt-1">
+                                                    {item.taskType === 'Production' && (
+                                                        <p className="font-mono text-primary whitespace-nowrap">Qty: {item.quantity}</p>
+                                                    )}
+                                                    <p className="text-xs text-muted-foreground whitespace-nowrap">{formatTime(item.startTime)} - {formatTime(item.endTime)}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                            </div>
+                         </div>
+                     ))}
                 </div>
             </div>
         </div>
@@ -530,5 +506,7 @@ function PlanDisplaySkeleton() {
     </Card>
   );
 }
+
+    
 
     
