@@ -31,6 +31,7 @@ export default function DataEntryPage() {
   useEffect(() => {
     if (isDataLoaded) {
       try {
+        // When saving from data entry, we only update the priority, keeping other fields intact.
         const updatedParts = parts.map((part, index) => ({...part, priority: index + 1}));
         window.localStorage.setItem(PARTS_STORAGE_KEY, JSON.stringify(updatedParts));
       } catch (error) {

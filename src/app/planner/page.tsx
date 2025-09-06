@@ -207,12 +207,30 @@ export default function PlannerPage() {
         });
         
         try {
+            // Save the plan and its config
             window.localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(result.data.plan));
             if(result.data.insights) window.localStorage.setItem(INSIGHTS_STORAGE_KEY, JSON.stringify(result.data.insights));
             if (result.data.discrepancyReport) {
                 window.localStorage.setItem(DISCREPANCY_REPORT_STORAGE_KEY, JSON.stringify(result.data.discrepancyReport));
             }
             window.localStorage.setItem(PLAN_CONFIG_STORAGE_KEY, JSON.stringify(configForStorage));
+            
+            // Update the master parts list with the new quantities
+            const currentMasterPartsJson = window.localStorage.getItem(PARTS_STORAGE_KEY);
+            const currentMasterParts: Part[] = currentMasterPartsJson ? JSON.parse(currentMasterPartsJson) : [];
+            
+            const updatedMasterParts = currentMasterParts.map(masterPart => {
+                const partFromPlan = partsForPlan.find(p => p.id === masterPart.id);
+                if (partFromPlan && partFromPlan.quantityToProduce !== undefined) {
+                    return { ...masterPart, quantityToProduce: partFromPlan.quantityToProduce };
+                }
+                return masterPart;
+            });
+
+            setMasterPartsList(updatedMasterParts);
+            window.localStorage.setItem(PARTS_STORAGE_KEY, JSON.stringify(updatedMasterParts));
+
+
         } catch (error) {
              toast({
                 variant: "destructive",
