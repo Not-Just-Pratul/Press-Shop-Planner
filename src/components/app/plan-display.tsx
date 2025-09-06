@@ -313,6 +313,15 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
             pattern: 'none'
         };
     };
+    
+    const timeIntervals = useMemo(() => {
+        const intervals = [];
+        const totalHours = shiftDuration / 60;
+        for (let i = 0; i <= totalHours; i++) {
+            intervals.push(i);
+        }
+        return intervals;
+    }, [shiftDuration]);
 
     return (
         <div className="border rounded-lg bg-card overflow-x-auto">
@@ -327,41 +336,55 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
                         ))}
                     </div>
                      <div>
-                        <div className="h-12 border-b flex items-center px-4 font-semibold">Tasks</div>
+                        <div className="h-12 border-b relative">
+                            {timeIntervals.map(hour => (
+                                <div 
+                                    key={hour}
+                                    className="absolute top-0 h-full text-center text-xs text-muted-foreground border-r"
+                                    style={{
+                                        left: `${(hour * 60 / shiftDuration) * 100}%`,
+                                        width: `${(60 / shiftDuration) * 100}%`
+                                    }}
+                                >
+                                    <span className="absolute top-1/2 -translate-y-1/2 left-2">{formatTime(hour * 60)}</span>
+                                </div>
+                            ))}
+                        </div>
                          {machines.map((machine, index) => (
-                             <div key={`${machine.machineName}-${index}`} className={cn("relative p-2 h-24 flex items-center border-b", index === machines.length - 1 && "border-b-0")}>
-                                 <div className="flex flex-wrap gap-2">
+                             <div key={`${machine.machineName}-${index}`} className={cn("relative h-24 border-b", index === machines.length - 1 && "border-b-0")}>
+                                 
                                      {productionPlan
                                         .filter(item => item.machineName === machine.machineName)
-                                        .sort((a,b) => a.startTime - b.startTime)
                                         .map((item, itemIndex) => {
                                             const colors = getPartColor(item.partName, item.taskType);
                                             const uniqueKey = `${item.machineName}-${item.partName}-${item.operationName}-${item.startTime}-${itemIndex}`;
+                                            const left = (item.startTime / shiftDuration) * 100;
+                                            const width = ((item.endTime - item.startTime) / shiftDuration) * 100;
 
                                             return (
                                                 <div
                                                     key={uniqueKey}
-                                                    className="rounded-md p-2 shadow-sm border text-xs"
+                                                    className="absolute top-2 bottom-2 rounded-md p-2 shadow-sm border text-xs overflow-hidden"
                                                     style={{
+                                                        left: `${left}%`,
+                                                        width: `${width}%`,
                                                         backgroundColor: colors.background,
                                                         borderColor: colors.border,
                                                         backgroundImage: colors.pattern,
                                                     }}
                                                 >
-                                                    <p className="font-bold break-words">{item.partName}</p>
-                                                    <p className="text-muted-foreground break-words">
+                                                    <p className="font-bold whitespace-nowrap">{item.partName}</p>
+                                                    <p className="text-muted-foreground whitespace-nowrap">
                                                         {item.taskType === 'Die Setting' ? 'Die Setting' : item.operationName}
                                                     </p>
                                                     <div className="space-y-1 mt-1">
                                                         {item.taskType === 'Production' && (
-                                                            <p className="font-mono text-primary">Qty: {item.quantity}</p>
+                                                            <p className="font-mono text-primary whitespace-nowrap">Qty: {item.quantity}</p>
                                                         )}
-                                                        <p className="text-muted-foreground">{`${formatTime(item.startTime)} - ${formatTime(item.endTime)}`}</p>
                                                     </div>
                                                 </div>
                                             );
                                         })}
-                                 </div>
                              </div>
                          ))}
                     </div>
