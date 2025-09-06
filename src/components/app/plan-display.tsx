@@ -339,7 +339,7 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
                                         return (
                                             <div
                                                 key={uniqueKey}
-                                                className="w-48 h-full rounded-md p-2 shadow-sm border text-xs flex flex-col justify-between"
+                                                className="h-full rounded-md p-2 shadow-sm border text-xs flex flex-col justify-between"
                                                 style={{
                                                     backgroundColor: colors.background,
                                                     borderColor: colors.border,
