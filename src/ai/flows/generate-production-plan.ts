@@ -39,11 +39,17 @@ const FreeUpMachineConstraintSchema = z.object({
     endTime: z.number().describe('The time in minutes from the start of the shift when the machine becomes available again.'),
 });
 
+const BreakTimeSchema = z.object({
+    start: z.number().describe('The start time of the break in minutes from the start of the shift.'),
+    end: z.number().describe('The end time of the break in minutes from the start of the shift.'),
+});
+
 
 const GenerateProductionPlanInputSchema = z.object({
   partsData: z.array(PartDataSchema).describe('Array of part data'),
   machinesData: z.array(MachineDataSchema).describe('Array of machine data'),
   productionShiftDuration: z.number().describe('Total minutes available in current shift'),
+  breakTime: z.optional(BreakTimeSchema).describe('The start and end time of the mandatory break for all machines.'),
   historicalProductionData: z.optional(z.string()).describe('Historical production data for similar operations, as a JSON string.'),
   freeUpMachineConstraints: z.optional(z.array(FreeUpMachineConstraintSchema)).describe('An optional list of constraints to ensure specific machines are unavailable during certain time slots.')
 });
@@ -112,6 +118,9 @@ Machines Data:
 {{/each}}
 
 Total Shift Duration: {{productionShiftDuration}} minutes.
+{{#if breakTime}}
+Mandatory Break: From minute {{breakTime.start}} to minute {{breakTime.end}}.
+{{/if}}
 Historical Production Data: {{{historicalProductionData}}}
 {{#if freeUpMachineConstraints}}
 Constraints:
@@ -147,7 +156,7 @@ Constraints:
     *   **Shift Boundary Rule (ABSOLUTE & MANDATORY):** The total shift duration is {{productionShiftDuration}} minutes. No task can be scheduled if its 'endTime' exceeds this value. This is a hard limit that you absolutely must not violate under any circumstances. If a task does not fit, it should not be scheduled.
     *   **Planned Downtime:** If a machine has a 'downtimeDuration', it is **STRICTLY UNAVAILABLE** from the start of the shift (minute 0) for that many minutes. You **MUST NOT** schedule any task that starts, ends, or runs within this time window. For example, if 'downtimeDuration' is 30, the machine is unavailable from time 0 to time 30. The earliest a task can start on this machine is at time 30.
     *   **Live Unavailability:** If a machine is marked as \`available: false\` and has no 'downtimeDuration' specified, it is unavailable for the **ENTIRE** shift. Do not schedule any tasks on it.
-    *   **Break Time (MANDATORY & DYNAMIC):** There is a mandatory 30-minute break for all machines. This break MUST be scheduled exactly in the middle of the provided 'productionShiftDuration'. First, calculate the midpoint of the shift as \`midpoint = productionShiftDuration / 2\`. The break window is from \`midpoint - 15\` minutes to \`midpoint + 15\` minutes. For example, if the shift is 540 minutes, the midpoint is 270, and the break is from minute 255 to 285. **NO TASK** can be scheduled that starts, ends, or runs within this 30-minute window for any machine. You must use the provided \`productionShiftDuration\` for this calculation, not a hardcoded value. This is a non-negotiable rule.
+    *   **Break Time (MANDATORY):** If a 'breakTime' is provided, it is a mandatory break for ALL machines. You **MUST NOT** schedule any task that starts, ends, or runs within the specified 'breakTime.start' and 'breakTime.end' window. All machines are unavailable during this period.
     *   **Free Up Machine Constraints:** If 'freeUpMachineConstraints' is provided, you must treat these as **strict unavailability slots**. For each constraint, the specified 'machineName' is unavailable for the entire duration from 'startTime' to 'endTime'. You **MUST NOT** schedule any task that overlaps in any way with this time window.
 7.  **Output Format:**
     *   The 'productionPlan' must be an array of scheduled items, with separate entries for 'Die Setting' and 'Production' tasks. Use the \`taskType\` field accordingly.
@@ -164,7 +173,4 @@ const generateProductionPlanFlow = ai.defineFlow(
     outputSchema: GenerateProductionPlanOutputSchema,
   },
   async input => {
-    const {output} = await productionPlanPrompt(input);
-    return output!;
-  }
-);
+    const {

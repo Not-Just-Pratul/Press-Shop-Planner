@@ -29,6 +29,11 @@ export interface Machine {
   downtimeStartTimestamp?: number; // For live countdown
 }
 
+export interface BreakTime {
+    start: string;
+    end: string;
+}
+
 
 // Types for AI schema
 export type PartData = Omit<Part, 'id' | 'selectedOperations'>;

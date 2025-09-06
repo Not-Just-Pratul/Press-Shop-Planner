@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import type { Part, Machine, ProductionPlan, PlanInsights, DiscrepancyReport, PlanConfig } from "@/lib/types";
+import type { Part, Machine, ProductionPlan, PlanInsights, DiscrepancyReport, PlanConfig, BreakTime } from "@/lib/types";
 import { getProductionPlan } from "@/app/actions";
 import { useToast } from "@/hooks/use-toast";
 import { AppHeader } from "@/components/app/app-header";
@@ -147,6 +147,7 @@ export default function PlannerPage() {
     async (options: { 
         duration: number;
         startTime: string;
+        breakTime: BreakTime;
         constraints: Array<{ machineName: string; startTime: number, endTime: number }> 
     }) => {
       setIsLoading(true);
@@ -179,6 +180,7 @@ export default function PlannerPage() {
         partsData: partsForApi,
         machinesData: machinesForPlan, 
         productionShiftDuration: options.duration,
+        breakTime: options.breakTime,
         freeUpMachineConstraints: options.constraints.length > 0 ? options.constraints : undefined,
       };
       
@@ -302,11 +304,4 @@ export default function PlannerPage() {
                             discrepancyReport={discrepancyReport}
                             shiftDuration={shiftDuration}
                             shiftStartTime={shiftStartTime}
-                        />
-                    </SortableContext>
-                </div>
-            </main>
-        </div>
-    </DndContext>
-  );
-}
+                        

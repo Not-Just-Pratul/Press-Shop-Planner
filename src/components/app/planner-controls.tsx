@@ -1,11 +1,12 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, ZapOff, PlusCircle, X, RotateCcw, Clock } from "lucide-react";
-import type { Machine, ProductionPlan, PlanInsights, DiscrepancyReport } from "@/lib/types";
+import { Loader2, ZapOff, PlusCircle, X, RotateCcw, Clock, Utensils } from "lucide-react";
+import type { Machine, ProductionPlan, PlanInsights, DiscrepancyReport, BreakTime } from "@/lib/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -22,7 +23,7 @@ interface Constraint {
 
 interface PlannerControlsProps {
   machines: Machine[];
-  onGeneratePlan: (options: { duration?: number; startTime?: string; constraints?: Array<{ machineName: string; startTime: number; endTime: number }>, replanTime?: string }) => void;
+  onGeneratePlan: (options: { duration?: number; startTime?: string; breakTime?: BreakTime, constraints?: Array<{ machineName: string; startTime: number; endTime: number }>, replanTime?: string }) => void;
   onResetPlan: () => void;
   isGeneratingPlan: boolean;
   isAdjustingPlan?: boolean;
@@ -48,12 +49,14 @@ export function PlannerControls({
 }: PlannerControlsProps) {
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("18:00");
+  const [breakTime, setBreakTime] = useState<BreakTime>({ start: "12:30", end: "13:00"});
   const [replanTime, setReplanTime] = useState("");
   const [constraints, setConstraints] = useState<Constraint[]>([]);
 
   useEffect(() => {
     if (isAdjustingPlan) {
         setStartTime(shiftStartTime);
+        // In adjustment mode, we might want to load break time from original config if it exists
     }
   }, [isAdjustingPlan, shiftStartTime]);
 
@@ -115,10 +118,16 @@ export function PlannerControls({
             endTime: calculateDuration(startTime, c.endTime),
         }))
         .filter(c => c.machineName && c.startTime >= 0 && c.endTime > c.startTime);
+
+    const processedBreakTime = {
+        start: calculateDuration(startTime, breakTime.start),
+        end: calculateDuration(startTime, breakTime.end),
+    };
     
     const options = {
         duration,
         startTime,
+        breakTime: processedBreakTime,
         constraints: processedConstraints
     };
 
@@ -194,6 +203,38 @@ export function PlannerControls({
               <p className="text-sm text-muted-foreground">
                 Calculated duration: <span className="font-semibold">{totalShiftDuration > 0 ? `${totalShiftDuration} minutes` : 'Invalid time range'}</span>
               </p>
+
+             <Card className="bg-muted/30">
+                <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                        <Utensils className="h-4 w-4" />
+                        Shift Break Time
+                    </CardTitle>
+                    <CardDescription>
+                        Define the mandatory break time for all machines.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col sm:flex-row items-center gap-4">
+                    <div className="space-y-2 w-full sm:flex-1">
+                        <Label htmlFor="break-start-time">Break Start Time</Label>
+                        <Input 
+                            id="break-start-time"
+                            type="time"
+                            value={breakTime.start}
+                            onChange={(e) => setBreakTime(bt => ({...bt, start: e.target.value}))}
+                        />
+                    </div>
+                    <div className="space-y-2 w-full sm:flex-1">
+                        <Label htmlFor="break-end-time">Break End Time</Label>
+                        <Input 
+                            id="break-end-time"
+                            type="time"
+                            value={breakTime.end}
+                            onChange={(e) => setBreakTime(bt => ({...bt, end: e.target.value}))}
+                        />
+                    </div>
+                </CardContent>
+            </Card>
 
               <Card className="bg-muted/30">
                   <CardHeader>
@@ -354,7 +395,4 @@ export function PlannerControls({
           shiftStartTime={isAdjustingPlan ? shiftStartTime : startTime}
         />
         {discrepancyReport && <DiscrepancyReportDisplay report={discrepancyReport} />}
-      </div>
-    </div>
-  );
-}
+      

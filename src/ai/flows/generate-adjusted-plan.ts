@@ -49,12 +49,18 @@ const ExistingProductionPlanSchema = z.object({
   summary: z.string(),
 });
 
+const BreakTimeSchema = z.object({
+    start: z.number().describe('The start time of the break in minutes from the start of the shift.'),
+    end: z.number().describe('The end time of the break in minutes from the start of the shift.'),
+});
+
 const GenerateAdjustedPlanInputSchema = z.object({
   partsData: z.array(PartDataSchema).describe('The complete, potentially updated, array of part data, including any new parts, changed priorities, and actual quantities produced.'),
   machinesData: z.array(MachineDataSchema).describe('Array of machine data.'),
   productionShiftDuration: z.number().describe('Total minutes available in the full shift.'),
   elapsedTimeSinceShiftStart: z.number().describe('The number of minutes that have already passed in the current shift. This is the new "time zero" for planning purposes.'),
   currentProductionPlan: ExistingProductionPlanSchema.describe('The currently active production plan that needs to be adjusted.'),
+  breakTime: z.optional(BreakTimeSchema).describe('The start and end time of the mandatory break for all machines.'),
   historicalProductionData: z.optional(z.string()).describe('Historical production data for similar operations, as a JSON string.'),
   // Stringified versions for the prompt
   stringifiedCurrentProductionPlan: z.string(),
@@ -120,7 +126,7 @@ You will be given the original plan, a full list of parts (including priorities 
     *   **10 minutes** for machines with capacity <= 50T.
     *   **15 minutes** for machines with capacity > 50T.
 6.  **Handle Downtime:** Account for any machine 'downtimeDuration' specified in 'machinesData', which starts from minute 0 of the shift.
-7.  **Mandatory Break:** There is a mandatory 30-minute break for all machines. This break MUST be scheduled exactly in the middle of the provided 'productionShiftDuration'. First, calculate the midpoint of the shift as \`midpoint = productionShiftDuration / 2\`. The break window is from \`midpoint - 15\` minutes to \`midpoint + 15\` minutes. **NO TASK** can be scheduled that starts, ends, or runs within this 30-minute window for any machine. You must use the provided \`productionShiftDuration\` for this calculation, not a hardcoded value. This is a non-negotiable rule.
+7.  **Mandatory Break:** If a 'breakTime' is provided, it is a mandatory break for ALL machines. You **MUST NOT** schedule any task that starts, ends, or runs within the specified 'breakTime.start' and 'breakTime.end' window. All machines are unavailable during this period.
 8.  **Output Format:**
     *   The 'productionPlan' array must contain **both** the preserved "locked" tasks from the original plan and the newly scheduled tasks for the remainder of the shift.
     *   The 'summary' MUST be a concise, point-by-point list explaining the adjustments. Use a hyphen (-) for each bullet point. It should clearly state:
@@ -132,6 +138,9 @@ You will be given the original plan, a full list of parts (including priorities 
 **Input Data (for context):**
 -   **Current Time (Elapsed Time):** {{elapsedTimeSinceShiftStart}} minutes
 -   **Total Shift Duration:** {{productionShiftDuration}} minutes
+{{#if breakTime}}
+-   **Mandatory Break:** From minute {{breakTime.start}} to minute {{breakTime.end}}.
+{{/if}}
 -   **Original Plan:** {{{stringifiedCurrentProductionPlan}}}
 -   **New Parts, Priorities & Actuals:** {{{stringifiedPartsData}}}
 -   **Machines:** {{{stringifiedMachinesData}}}
