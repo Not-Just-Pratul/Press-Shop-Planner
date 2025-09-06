@@ -325,8 +325,8 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
                 </TableHeader>
                 <TableBody>
                     {machines.map((machine, index) => (
-                        <TableRow key={`${machine.machineName}-${index}`} className="h-36">
-                            <TableCell className="font-semibold sticky left-0 bg-card z-10 w-40 min-w-[160px] border-r align-top">
+                        <TableRow key={`${machine.machineName}-${index}`} className="h-auto align-top">
+                            <TableCell className="font-semibold sticky left-0 bg-card z-10 w-40 min-w-[160px] border-r align-top py-4">
                                 {machine.machineName}
                             </TableCell>
                             <TableCell className="p-2 align-top">
@@ -341,7 +341,7 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
                                             return (
                                                 <div
                                                     key={uniqueKey}
-                                                    className="w-48 h-32 rounded-md p-2 shadow-sm border text-xs"
+                                                    className="rounded-md p-2 shadow-sm border text-xs"
                                                     style={{
                                                         backgroundColor: colors.background,
                                                         borderColor: colors.border,
@@ -507,5 +507,7 @@ function PlanDisplaySkeleton() {
     </Card>
   );
 }
+
+    
 
     
