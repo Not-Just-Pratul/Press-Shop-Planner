@@ -56,28 +56,8 @@ export function PlannerControls({
   useEffect(() => {
     if (isAdjustingPlan) {
         setStartTime(shiftStartTime);
-        // In adjustment mode, we might want to load break time from original config if it exists
     }
   }, [isAdjustingPlan, shiftStartTime]);
-
-
-  const timeSlots = useMemo(() => {
-    const slots: { value: string, label: string }[] = [];
-    const duration = calculateDuration(startTime, endTime);
-    if (duration <= 0) return [];
-
-    const today = new Date().toISOString().split('T')[0];
-    const startDateTime = new Date(`${today}T${startTime}:00`);
-
-    for (let i = 0; i <= duration; i += 15) {
-        const slotDate = new Date(startDateTime.getTime() + i * 60000);
-        slots.push({
-            value: slotDate.toTimeString().substring(0, 5),
-            label: slotDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-        });
-    }
-    return slots;
-  }, [startTime, endTime]);
   
   const handleAddConstraint = () => {
     setConstraints([...constraints, { id: crypto.randomUUID(), machineName: "", startTime: "", endTime: "" }]);
@@ -88,17 +68,7 @@ export function PlannerControls({
   };
   
   const handleConstraintChange = (id: string, field: 'machineName' | 'startTime' | 'endTime', value: string) => {
-      setConstraints(constraints.map(c => {
-          if (c.id === id) {
-              const newConstraint = { ...c, [field]: value };
-              // if startTime changes, reset endTime if it's no longer valid
-              if (field === 'startTime' && newConstraint.endTime && newConstraint.endTime < value) {
-                  newConstraint.endTime = "";
-              }
-              return newConstraint;
-          }
-          return c;
-      }));
+      setConstraints(constraints.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
 
@@ -247,17 +217,15 @@ export function PlannerControls({
                       </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                      {constraints.map((constraint, index) => {
-                        const availableEndTimeSlots = timeSlots.filter(slot => slot.value > constraint.startTime);
-                        return (
+                      {constraints.map((constraint, index) => (
                           <div key={constraint.id} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr_auto] gap-2 items-end">
                               <div>
-                                  {index === 0 && <Label htmlFor={`free-up-machine-${constraint.id}`}>Machine</Label>}
+                                  {index === 0 && <Label>Machine</Label>}
                                   <Select 
                                       value={constraint.machineName} 
                                       onValueChange={(value) => handleConstraintChange(constraint.id, 'machineName', value)}
                                   >
-                                      <SelectTrigger id={`free-up-machine-${constraint.id}`}>
+                                      <SelectTrigger>
                                           <SelectValue placeholder="Select machine" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -269,38 +237,22 @@ export function PlannerControls({
                                   </Select>
                               </div>
                               <div>
-                                  {index === 0 && <Label htmlFor={`free-from-time-${constraint.id}`}>Free From</Label>}
-                                  <Select 
-                                      value={constraint.startTime} 
-                                      onValueChange={(value) => handleConstraintChange(constraint.id, 'startTime', value)} 
+                                  {index === 0 && <Label>Free From</Label>}
+                                  <Input
+                                      type="time"
+                                      value={constraint.startTime}
+                                      onChange={(e) => handleConstraintChange(constraint.id, 'startTime', e.target.value)}
                                       disabled={!constraint.machineName}
-                                  >
-                                      <SelectTrigger id={`free-from-time-${constraint.id}`}>
-                                          <SelectValue placeholder="Start time" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                          {timeSlots.map(slot => (
-                                              <SelectItem key={slot.value} value={slot.value}>{slot.label}</SelectItem>
-                                          ))}
-                                      </SelectContent>
-                                  </Select>
+                                  />
                               </div>
                                <div>
-                                  {index === 0 && <Label htmlFor={`free-to-time-${constraint.id}`}>Free To</Label>}
-                                  <Select 
-                                      value={constraint.endTime} 
-                                      onValueChange={(value) => handleConstraintChange(constraint.id, 'endTime', value)} 
+                                  {index === 0 && <Label>Free To</Label>}
+                                  <Input
+                                      type="time"
+                                      value={constraint.endTime}
+                                      onChange={(e) => handleConstraintChange(constraint.id, 'endTime', e.target.value)}
                                       disabled={!constraint.startTime}
-                                  >
-                                      <SelectTrigger id={`free-to-time-${constraint.id}`}>
-                                          <SelectValue placeholder="End time" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                          {availableEndTimeSlots.map(slot => (
-                                              <SelectItem key={slot.value} value={slot.value}>{slot.label}</SelectItem>
-                                          ))}
-                                      </SelectContent>
-                                  </Select>
+                                  />
                               </div>
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
@@ -328,7 +280,7 @@ export function PlannerControls({
                             </AlertDialog>
                           </div>
                         )
-                      })}
+                      )}
                         <AlertDialog>
                             <AlertDialogTrigger asChild>
                                 <Button type="button" variant="outline" size="sm">

@@ -316,22 +316,22 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
 
     return (
         <div className="border rounded-lg bg-card overflow-x-auto">
-            <Table>
-                <TableHeader>
-                    <TableRow className="bg-muted/50 hover:bg-muted/50">
-                        <TableHead className="sticky left-0 bg-muted/50 z-10 w-40 min-w-[160px] font-semibold">Machine</TableHead>
-                        <TableHead>Tasks</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {machines.map((machine, index) => (
-                        <TableRow key={`${machine.machineName}-${index}`} className="h-auto align-top">
-                            <TableCell className="font-semibold sticky left-0 bg-card z-10 w-40 min-w-[160px] border-r align-top py-4">
+            <div className="relative">
+                <div className="grid grid-cols-[160px_1fr] divide-x">
+                    <div className="sticky left-0 bg-muted/50 z-10 font-semibold">
+                        <div className="h-12 flex items-center px-4 border-b">Machine</div>
+                        {machines.map((machine, index) => (
+                             <div key={`${machine.machineName}-${index}`} className={cn("flex items-center px-4 h-24 border-b", index === machines.length - 1 && "border-b-0")}>
                                 {machine.machineName}
-                            </TableCell>
-                            <TableCell className="p-2 align-top">
-                                <div className="flex flex-wrap gap-2">
-                                    {productionPlan
+                             </div>
+                        ))}
+                    </div>
+                     <div>
+                        <div className="h-12 border-b flex items-center px-4 font-semibold">Tasks</div>
+                         {machines.map((machine, index) => (
+                             <div key={`${machine.machineName}-${index}`} className={cn("relative p-2 h-24 flex items-center border-b", index === machines.length - 1 && "border-b-0")}>
+                                 <div className="flex flex-wrap gap-2">
+                                     {productionPlan
                                         .filter(item => item.machineName === machine.machineName)
                                         .sort((a,b) => a.startTime - b.startTime)
                                         .map((item, itemIndex) => {
@@ -361,12 +361,12 @@ function GanttChart({ plan, machines, shiftDuration, formatTime }: { plan: Produ
                                                 </div>
                                             );
                                         })}
-                                </div>
-                            </TableCell>
-                        </TableRow>
-                    ))}
-                </TableBody>
-            </Table>
+                                 </div>
+                             </div>
+                         ))}
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
@@ -507,7 +507,5 @@ function PlanDisplaySkeleton() {
     </Card>
   );
 }
-
-    
 
     
