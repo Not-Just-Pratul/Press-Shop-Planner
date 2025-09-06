@@ -134,10 +134,11 @@ Constraints:
 1.  **Prioritize Parts:** Start by scheduling the parts with the lowest priority number first.
 2.  **Process Flow:** Each part must go through its specified operations sequentially. A production operation cannot start until its die setting is complete. A new operation for a part cannot start until the previous production operation for that same part is complete.
 3.  **Machine Allocation (Key Optimization):**
-    *   For each operation, identify suitable machines based on the "Lowest Press" requirement. A machine's capacity must be greater than or equal to the required tonnage.
-    *   **CRITICAL RULE:** To prevent waste, you must not use a press that is excessively large for an operation. A suitable machine is one that meets the minimum tonnage, but you should prioritize the machine with the capacity that is *closest* to the requirement.
-    *   **Example:** If an operation requires a 10T press, and machines with 10T, 20T, 30T, and 50T capacity are available, you must first try to schedule on a 10T press. If all 10T presses are busy, you may use a 20T press. You are **NOT** allowed to use a 30T or 50T press for a 10T job unless no 10T or 20T presses are available for the entire shift. Always select the available machine with the lowest suitable capacity.
-    *   After identifying the pool of *appropriate* machines, you must check the availability of every machine in that pool and choose the one that allows the earliest possible start time.
+    *   For each operation, identify the ideal machine based on the "Lowest Press" requirement.
+    *   **CRITICAL RULE - NEXT LEVEL UP ONLY:** You must schedule the operation on an available ideal machine. If all ideal machines are busy, you are ONLY allowed to use a machine from the **next immediate capacity tier**.
+    *   **Example:** An operation requires a 75T press. The available machines are 75T, 100T, and 150T. You MUST prioritize the 75T presses. If they are all busy for the entire required duration, you may ONLY use a 100T press. You are **STRICTLY FORBIDDEN** from using the 150T press in this scenario because the 100T represents the next available tier.
+    *   To do this: First, find all machines with the ideal capacity. Check their availability. If none are free, find all machines in the next capacity tier up, and check their availability. Continue this process one tier at a time. Do not skip tiers.
+    *   After identifying the pool of *appropriate* machines using the rule above, you must choose the one that allows the earliest possible start time.
 4.  **Scheduling Logic (Minute-by-Minute):**
     *   Keep track of each machine's availability schedule. A machine is busy during a scheduled operation and die removal.
     *   **Separate Die Setting:** For each operation, you MUST create two separate items in the \`productionPlan\`:
