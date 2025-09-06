@@ -125,7 +125,7 @@ export default function PlannerPage() {
     try {
         window.localStorage.removeItem(PLAN_STORAGE_KEY);
         window.localStorage.removeItem(INSIGHTS_STORAGE_KEY);
-        window.localStorage.removeItem(DISCREPANCY_REPORT_STORAGE_KEY);
+        window.localStorage.removeItem(DISCREPancy_REPORT_STORAGE_KEY);
         window.localStorage.removeItem(PLAN_CONFIG_STORAGE_KEY);
         toast({
             title: "Plan Reset",
@@ -180,15 +180,16 @@ export default function PlannerPage() {
         partsData: partsForApi,
         machinesData: machinesForPlan, 
         productionShiftDuration: options.duration,
-        breakTime: options.breakTime,
+        breakTime: options.breakTime.start && options.breakTime.end ? options.breakTime : undefined,
         freeUpMachineConstraints: options.constraints.length > 0 ? options.constraints : undefined,
       };
       
       const configForStorage: PlanConfig & {startTime: string} = {
-        ...input,
          partsData: partsForPlan,
          machinesData: machines,
+         productionShiftDuration: options.duration,
          startTime: options.startTime,
+         breakTime: options.breakTime.start && options.breakTime.end ? options.breakTime : undefined,
       }
 
       const result = await getProductionPlan(input as any);
@@ -304,4 +305,11 @@ export default function PlannerPage() {
                             discrepancyReport={discrepancyReport}
                             shiftDuration={shiftDuration}
                             shiftStartTime={shiftStartTime}
-                        
+                        />
+                    </SortableContext>
+                </div>
+            </main>
+        </div>
+    </DndContext>
+  );
+}

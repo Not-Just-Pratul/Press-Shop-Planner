@@ -173,4 +173,10 @@ const generateProductionPlanFlow = ai.defineFlow(
     outputSchema: GenerateProductionPlanOutputSchema,
   },
   async input => {
-    const {
+    const {output} = await productionPlanPrompt(input);
+    if (!output) {
+      throw new Error("The AI failed to generate a production plan.");
+    }
+    return output;
+  }
+);
