@@ -395,4 +395,9 @@ export function PlannerControls({
           shiftStartTime={isAdjustingPlan ? shiftStartTime : startTime}
         />
         {discrepancyReport && <DiscrepancyReportDisplay report={discrepancyReport} />}
-      
+      </div>
+    </div>
+  );
+}
+
+    
