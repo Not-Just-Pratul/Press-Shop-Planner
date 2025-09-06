@@ -69,7 +69,7 @@ export function PlannerControls({
     const today = new Date().toISOString().split('T')[0];
     const startDateTime = new Date(`${today}T${startTime}:00`);
 
-    for (let i = 0; i <= duration; i += 30) {
+    for (let i = 0; i <= duration; i += 15) {
         const slotDate = new Date(startDateTime.getTime() + i * 60000);
         slots.push({
             value: slotDate.toTimeString().substring(0, 5),
