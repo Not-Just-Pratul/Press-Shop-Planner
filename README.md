@@ -1,4 +1,16 @@
-# Press Shop Planner
+<p align="center">
+  <h1 align="center">🏭 Press Shop Planner</h1>
+  <p align="center">
+    A production planning application built with Next.js and Firebase Studio
+  </p>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js" alt="Next.js 15" />
+  <img src="https://img.shields.io/badge/React-18-blue?style=flat-square&logo=react" alt="React 18" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" />
+</p>
 
 A production planning application built with Next.js and Firebase Studio, designed for shop floor planners and operations teams to manage scheduling, machine utilization, and downtime planning.
 
