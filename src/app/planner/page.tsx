@@ -1,30 +1,30 @@
-
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import type { Part, Machine, ProductionPlan, PlanInsights, DiscrepancyReport, PlanConfig, BreakTime, BreakTimeMinutes } from "@/lib/types";
+import type {
+  Part, Machine, ProductionPlan, PlanInsights,
+  DiscrepancyReport, PlanConfig, BreakTimeMinutes,
+} from "@/lib/types";
 import { getProductionPlan } from "@/app/actions";
 import { useToast } from "@/hooks/use-toast";
 import { AppHeader } from "@/components/app/app-header";
 import { ConfigPanel } from "@/components/app/config-panel";
 import { initialParts, initialMachines } from "@/lib/initial-data";
 import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
+  DndContext, closestCenter,
+  KeyboardSensor, PointerSensor,
+  useSensor, useSensors,
+  type DragEndEvent,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
+  arrayMove, SortableContext,
+  sortableKeyboardCoordinates, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { Skeleton } from "@/components/ui/skeleton";
 
+// ---------------------------------------------------------------------------
+// Local storage keys
+// ---------------------------------------------------------------------------
 
 const PARTS_STORAGE_KEY = 'press-shop-optimizer-parts';
 const MACHINES_STORAGE_KEY = 'press-shop-optimizer-machines';
@@ -33,6 +33,9 @@ const INSIGHTS_STORAGE_KEY = 'press-shop-optimizer-insights';
 const DISCREPANCY_REPORT_STORAGE_KEY = 'press-shop-optimizer-discrepancy-report';
 const PLAN_CONFIG_STORAGE_KEY = 'press-shop-optimizer-plan-config';
 
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export default function PlannerPage() {
   const [masterPartsList, setMasterPartsList] = useState<Part[]>([]);
@@ -48,29 +51,29 @@ export default function PlannerPage() {
   const [shiftStartTime, setShiftStartTime] = useState("09:00");
 
   const { toast } = useToast();
-  
+
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
-    })
+    }),
   );
 
+  // ---- Load persisted data on mount ----
   useEffect(() => {
     try {
       const savedParts = window.localStorage.getItem(PARTS_STORAGE_KEY);
       setMasterPartsList(savedParts ? JSON.parse(savedParts) : initialParts);
-      
+
       const savedMachines = window.localStorage.getItem(MACHINES_STORAGE_KEY);
       setMachines(savedMachines ? JSON.parse(savedMachines) : initialMachines);
 
-      // Load persisted plan data
       const savedPlan = window.localStorage.getItem(PLAN_STORAGE_KEY);
       if (savedPlan) setPlan(JSON.parse(savedPlan));
 
       const savedInsights = window.localStorage.getItem(INSIGHTS_STORAGE_KEY);
       if (savedInsights) setInsights(JSON.parse(savedInsights));
-      
+
       const savedDiscrepancyReport = window.localStorage.getItem(DISCREPANCY_REPORT_STORAGE_KEY);
       if (savedDiscrepancyReport) setDiscrepancyReport(JSON.parse(savedDiscrepancyReport));
 
@@ -82,7 +85,6 @@ export default function PlannerPage() {
         setShiftDuration(config.productionShiftDuration || 0);
         setShiftStartTime(config.startTime || "09:00");
       }
-
     } catch (error) {
       console.error("Failed to load data from localStorage", error);
       setMasterPartsList(initialParts);
@@ -90,7 +92,8 @@ export default function PlannerPage() {
     }
     setIsDataLoaded(true);
   }, []);
-  
+
+  // ---- Persist machines whenever they change ----
   useEffect(() => {
     if (isDataLoaded) {
       try {
@@ -101,18 +104,19 @@ export default function PlannerPage() {
     }
   }, [machines, isDataLoaded]);
 
+  // ---- Part selection ----
   const handlePartSelectionChange = (partToAdd: Part) => {
     setPartsForPlan(currentParts => {
-        if (partToAdd && !currentParts.some(p => p.id === partToAdd.id)) {
-          // When adding a part, default its selectedOperations to all operations
-          const partWithSelectedOps = { ...partToAdd, selectedOperations: [...partToAdd.operations] };
-          const newParts = [...currentParts, partWithSelectedOps];
-          return newParts.map((p, index) => ({...p, priority: index + 1}));
-        }
+      if (partToAdd && !currentParts.some(p => p.id === partToAdd.id)) {
+        const partWithSelectedOps = { ...partToAdd, selectedOperations: [...partToAdd.operations] };
+        const newParts = [...currentParts, partWithSelectedOps];
+        return newParts.map((p, index) => ({ ...p, priority: index + 1 }));
+      }
       return currentParts;
     });
   };
 
+  // ---- Reset plan ----
   const handleResetPlan = useCallback(() => {
     setIsLoading(true);
     setPlan(null);
@@ -123,32 +127,29 @@ export default function PlannerPage() {
     setShiftStartTime("09:00");
 
     try {
-        window.localStorage.removeItem(PLAN_STORAGE_KEY);
-        window.localStorage.removeItem(INSIGHTS_STORAGE_KEY);
-        window.localStorage.removeItem(DISCREPANCY_REPORT_STORAGE_KEY);
-        window.localStorage.removeItem(PLAN_CONFIG_STORAGE_KEY);
-        toast({
-            title: "Plan Reset",
-            description: "The planner has been cleared.",
-        });
+      window.localStorage.removeItem(PLAN_STORAGE_KEY);
+      window.localStorage.removeItem(INSIGHTS_STORAGE_KEY);
+      window.localStorage.removeItem(DISCREPANCY_REPORT_STORAGE_KEY);
+      window.localStorage.removeItem(PLAN_CONFIG_STORAGE_KEY);
+      toast({ title: "Plan Reset", description: "The planner has been cleared." });
     } catch (error) {
-         toast({
-            variant: "destructive",
-            title: "Error Resetting Plan",
-            description: "Could not clear the saved plan from your browser's storage.",
-        });
+      toast({
+        variant: "destructive",
+        title: "Error Resetting Plan",
+        description: "Could not clear the saved plan from your browser's storage.",
+      });
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
   }, [toast]);
 
-
+  // ---- Generate plan ----
   const handleGeneratePlan = useCallback(
-    async (options: { 
-        duration: number;
-        startTime: string;
-        breakTime: BreakTimeMinutes;
-        constraints: Array<{ machineName: string; startTime: number, endTime: number }> 
+    async (options: {
+      duration: number;
+      startTime: string;
+      breakTime: BreakTimeMinutes;
+      constraints: Array<{ machineName: string; startTime: number; endTime: number }>;
     }) => {
       setIsLoading(true);
       setPlan(null);
@@ -156,7 +157,6 @@ export default function PlannerPage() {
       setDiscrepancyReport(null);
       setShiftDuration(options.duration);
       setShiftStartTime(options.startTime);
-
 
       if (partsForPlan.length === 0) {
         toast({
@@ -167,30 +167,29 @@ export default function PlannerPage() {
         setIsLoading(false);
         return;
       }
-      
-      const machinesForPlan = machines.map(({ id, downtimeStartTimestamp, ...rest}) => rest);
+
+      const machinesForPlan = machines.map(({ id, downtimeStartTimestamp, ...rest }) => rest);
 
       const partsForApi = partsForPlan.map(({ id, selectedOperations, operations, ...rest }) => ({
-          ...rest,
-          operations: selectedOperations || operations, // Use selected, fallback to all
+        ...rest,
+        operations: selectedOperations || operations,
       }));
-
 
       const input = {
         partsData: partsForApi,
-        machinesData: machinesForPlan, 
+        machinesData: machinesForPlan,
         productionShiftDuration: options.duration,
         breakTime: options.breakTime.start && options.breakTime.end ? options.breakTime : undefined,
         freeUpMachineConstraints: options.constraints.length > 0 ? options.constraints : undefined,
       };
-      
-      const configForStorage: PlanConfig & {startTime: string} = {
-         partsData: partsForPlan,
-         machinesData: machines,
-         productionShiftDuration: options.duration,
-         startTime: options.startTime,
-         breakTime: options.breakTime.start && options.breakTime.end ? options.breakTime : undefined,
-      }
+
+      const configForStorage: PlanConfig & { startTime: string } = {
+        partsData: partsForPlan,
+        machinesData: machines,
+        productionShiftDuration: options.duration,
+        startTime: options.startTime,
+        breakTime: options.breakTime.start && options.breakTime.end ? options.breakTime : undefined,
+      };
 
       const result = await getProductionPlan(input as any);
 
@@ -208,108 +207,109 @@ export default function PlannerPage() {
           title: "Plan Generated & Saved",
           description: "Your new plan is ready and will be here if you refresh.",
         });
-        
+
         try {
-            // Save the plan and its config
-            window.localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(result.data.plan));
-            if(result.data.insights) window.localStorage.setItem(INSIGHTS_STORAGE_KEY, JSON.stringify(result.data.insights));
-            if (result.data.discrepancyReport) {
-                window.localStorage.setItem(DISCREPANCY_REPORT_STORAGE_KEY, JSON.stringify(result.data.discrepancyReport));
+          window.localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(result.data.plan));
+          if (result.data.insights) {
+            window.localStorage.setItem(INSIGHTS_STORAGE_KEY, JSON.stringify(result.data.insights));
+          }
+          if (result.data.discrepancyReport) {
+            window.localStorage.setItem(
+              DISCREPANCY_REPORT_STORAGE_KEY,
+              JSON.stringify(result.data.discrepancyReport),
+            );
+          }
+          window.localStorage.setItem(PLAN_CONFIG_STORAGE_KEY, JSON.stringify(configForStorage));
+
+          // Sync quantity updates back to master parts list
+          const currentMasterPartsJson = window.localStorage.getItem(PARTS_STORAGE_KEY);
+          const currentMasterParts: Part[] = currentMasterPartsJson
+            ? JSON.parse(currentMasterPartsJson)
+            : [];
+
+          const updatedMasterParts = currentMasterParts.map(masterPart => {
+            const partFromPlan = partsForPlan.find(p => p.id === masterPart.id);
+            if (partFromPlan?.quantityToProduce !== undefined) {
+              return { ...masterPart, quantityToProduce: partFromPlan.quantityToProduce };
             }
-            window.localStorage.setItem(PLAN_CONFIG_STORAGE_KEY, JSON.stringify(configForStorage));
-            
-            // Update the master parts list with the new quantities
-            const currentMasterPartsJson = window.localStorage.getItem(PARTS_STORAGE_KEY);
-            const currentMasterParts: Part[] = currentMasterPartsJson ? JSON.parse(currentMasterPartsJson) : [];
-            
-            const updatedMasterParts = currentMasterParts.map(masterPart => {
-                const partFromPlan = partsForPlan.find(p => p.id === masterPart.id);
-                if (partFromPlan && partFromPlan.quantityToProduce !== undefined) {
-                    return { ...masterPart, quantityToProduce: partFromPlan.quantityToProduce };
-                }
-                return masterPart;
-            });
+            return masterPart;
+          });
 
-            setMasterPartsList(updatedMasterParts);
-            window.localStorage.setItem(PARTS_STORAGE_KEY, JSON.stringify(updatedMasterParts));
-
-
+          setMasterPartsList(updatedMasterParts);
+          window.localStorage.setItem(PARTS_STORAGE_KEY, JSON.stringify(updatedMasterParts));
         } catch (error) {
-             toast({
-                variant: "destructive",
-                title: "Could not save plan",
-                description: "Your plan was generated but could not be saved to your browser's storage.",
-            });
+          toast({
+            variant: "destructive",
+            title: "Could not save plan",
+            description: "Your plan was generated but could not be saved to your browser's storage.",
+          });
         }
-
       }
 
       setIsLoading(false);
     },
-    [partsForPlan, machines, toast]
+    [partsForPlan, machines, toast],
   );
-  
+
+  // ---- Drag-and-drop reordering ----
   const handleDragEnd = (event: DragEndEvent) => {
-    const {active, over} = event;
+    const { active, over } = event;
 
     if (over && active.id !== over.id) {
-      setPartsForPlan((items) => {
-        const oldIndex = items.findIndex((item) => item.id === active.id);
-        const newIndex = items.findIndex((item) => item.id === over.id);
+      setPartsForPlan(items => {
+        const oldIndex = items.findIndex(item => item.id === active.id);
+        const newIndex = items.findIndex(item => item.id === over.id);
         const reorderedItems = arrayMove(items, oldIndex, newIndex);
         return reorderedItems.map((item, index) => ({ ...item, priority: index + 1 }));
       });
     }
-  }
-  
+  };
+
+  // ---- Loading skeleton ----
   if (!isDataLoaded) {
-      return (
-          <div className="flex flex-col h-screen bg-background">
-              <AppHeader />
-              <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8">
-                  <Skeleton className="h-12 w-3/4 mb-4" />
-                  <Skeleton className="h-8 w-full mb-6" />
-                  <div className="space-y-4 pt-4">
-                      <Skeleton className="h-20 w-full" />
-                      <Skeleton className="h-20 w-full" />
-                      <Skeleton className="h-20 w-full" />
-                  </div>
-              </main>
+    return (
+      <div className="flex flex-col h-screen bg-background">
+        <AppHeader />
+        <main className="flex-1 container mx-auto p-4 md:p-6 lg:p-8">
+          <Skeleton className="h-12 w-3/4 mb-4" />
+          <Skeleton className="h-8 w-full mb-6" />
+          <div className="space-y-4 pt-4">
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
           </div>
-      )
+        </main>
+      </div>
+    );
   }
 
   return (
-    <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-    >
-        <div className="flex flex-col min-h-screen bg-background">
-            <AppHeader />
-            <main className="flex-1 p-4 md:p-6 lg:p-8 space-y-8">
-                <div className="container mx-auto">
-                    <SortableContext items={partsForPlan.map(p => p.id)} strategy={verticalListSortingStrategy}>
-                        <ConfigPanel
-                            parts={partsForPlan}
-                            setParts={setPartsForPlan}
-                            machines={machines}
-                            setMachines={setMachines}
-                            onGeneratePlan={handleGeneratePlan}
-                            onResetPlan={handleResetPlan}
-                            isGeneratingPlan={isLoading}
-                            masterPartsList={masterPartsList}
-                            onPartSelectionChange={handlePartSelectionChange}
-                            plan={plan}
-                            insights={insights}
-                            discrepancyReport={discrepancyReport}
-                            shiftDuration={shiftDuration}
-                            shiftStartTime={shiftStartTime}
-                        />
-                    </SortableContext>
-                </div>
-            </main>
-        </div>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <div className="flex flex-col min-h-screen bg-background">
+        <AppHeader />
+        <main className="flex-1 p-4 md:p-6 lg:p-8 space-y-8">
+          <div className="container mx-auto">
+            <SortableContext items={partsForPlan.map(p => p.id)} strategy={verticalListSortingStrategy}>
+              <ConfigPanel
+                parts={partsForPlan}
+                setParts={setPartsForPlan}
+                machines={machines}
+                setMachines={setMachines}
+                onGeneratePlan={handleGeneratePlan}
+                onResetPlan={handleResetPlan}
+                isGeneratingPlan={isLoading}
+                masterPartsList={masterPartsList}
+                onPartSelectionChange={handlePartSelectionChange}
+                plan={plan}
+                insights={insights}
+                discrepancyReport={discrepancyReport}
+                shiftDuration={shiftDuration}
+                shiftStartTime={shiftStartTime}
+              />
+            </SortableContext>
+          </div>
+        </main>
+      </div>
     </DndContext>
   );
 }

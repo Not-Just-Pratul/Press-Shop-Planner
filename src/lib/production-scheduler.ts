@@ -1,4 +1,8 @@
-import type { Part, Machine, PlanConfig, ProductionPlanItem, TimeWindow } from './types';
+import type { Part, Machine, ProductionPlanItem, TimeWindow } from './types';
+
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
 
 export interface SchedulerInput {
   partsData: Part[];
@@ -8,7 +12,6 @@ export interface SchedulerInput {
   freeUpMachineConstraints?: Array<{ machineName: string; startTime: number; endTime: number }>;
   elapsedTimeSinceShiftStart?: number;
   currentProductionPlan?: { productionPlan: ProductionPlanItem[]; summary: string };
-  historicalProductionData?: string;
 }
 
 export interface SchedulerOutput {
@@ -27,18 +30,22 @@ export interface SchedulerOutput {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Utility helpers
+// ---------------------------------------------------------------------------
+
+/** Extract numeric capacity from a machine name like "200T Press" → 200 */
 export function parseMachineCapacity(machineName: string): number {
   const match = machineName.match(/(\d+)T/);
   return match ? parseInt(match[1], 10) : 0;
 }
 
+/** Die removal time: 10 mins for ≤50T machines, 15 mins for >50T */
 export function getDieRemovalTime(capacity: number): number {
   return capacity <= 50 ? 10 : 15;
 }
 
-/**
- * Merge overlapping or adjacent time windows
- */
+/** Merge overlapping or adjacent time windows into non-overlapping set */
 export function mergeTimeWindows(windows: TimeWindow[]): TimeWindow[] {
   if (windows.length <= 1) return windows;
 
@@ -59,26 +66,34 @@ export function mergeTimeWindows(windows: TimeWindow[]): TimeWindow[] {
   return merged;
 }
 
+// ---------------------------------------------------------------------------
+// Machine unavailability windows
+// ---------------------------------------------------------------------------
+
 /**
- * Build all unavailable time windows for a machine (downtime, break, constraints)
+ * Build all unavailable time windows for a machine (downtime, break, constraints).
+ * Returns a merged, sorted array of non-overlapping TimeWindows.
  */
 export function buildMachineUnavailableWindows(
   machine: Machine,
   shiftDuration: number,
   breakTime?: { start: number; end: number },
-  freeUpConstraints?: Array<{ machineName: string; startTime: number; endTime: number }>
+  freeUpConstraints?: Array<{ machineName: string; startTime: number; endTime: number }>,
 ): TimeWindow[] {
   const rawWindows: TimeWindow[] = [];
 
+  // Machine completely offline for entire shift
   if (!machine.available) {
     rawWindows.push({ start: 0, end: shiftDuration });
     return rawWindows;
   }
 
+  // Machine starts with downtime
   if (machine.downtimeDuration && machine.downtimeDuration > 0) {
     rawWindows.push({ start: 0, end: machine.downtimeDuration });
   }
 
+  // Break window (e.g. 1:00 PM – 1:30 PM)
   if (breakTime && breakTime.start < breakTime.end) {
     if (breakTime.start < shiftDuration && breakTime.end > 0) {
       rawWindows.push({
@@ -88,6 +103,7 @@ export function buildMachineUnavailableWindows(
     }
   }
 
+  // Free-up constraints – machine blocked during specific windows
   if (freeUpConstraints) {
     for (const c of freeUpConstraints) {
       if (c.machineName === machine.machineName && c.startTime < c.endTime) {
@@ -102,90 +118,124 @@ export function buildMachineUnavailableWindows(
   return mergeTimeWindows(rawWindows);
 }
 
+// ---------------------------------------------------------------------------
+// Working segment allocation
+// ---------------------------------------------------------------------------
+
 /**
- * Given a start time and required working duration, allocate work across available working time,
- * pausing during any unavailable windows (such as shift break 1:00 PM - 1:30 PM or downtime).
- * Returns an array of working segments: { start, end, duration }
+ * Given a desired start time and required working duration, allocate work across
+ * available time, pausing during any unavailable windows (e.g. break 1:00–1:30 PM).
+ *
+ * @returns Array of working segments and the finish time, or null if the work
+ *          cannot fit within the remaining shift.
  */
 export function allocateWorkingSegments(
   desiredStart: number,
   requiredWorkingMinutes: number,
   shiftDuration: number,
-  unavailableWindows: TimeWindow[]
+  unavailableWindows: TimeWindow[],
 ): { segments: TimeWindow[]; finishTime: number } | null {
   if (requiredWorkingMinutes <= 0) {
     return { segments: [], finishTime: desiredStart };
   }
 
-  let curr = Math.max(0, desiredStart);
+  let cursor = Math.max(0, desiredStart);
   let remainingMinutes = requiredWorkingMinutes;
   const segments: TimeWindow[] = [];
 
-  while (curr < shiftDuration && remainingMinutes > 0) {
-    // Check if curr falls inside an unavailable window
-    const blockingWin = unavailableWindows.find(w => curr >= w.start && curr < w.end);
-
-    if (blockingWin) {
-      // Pause production; jump time to end of unavailable window
-      curr = blockingWin.end;
+  while (cursor < shiftDuration && remainingMinutes > 0) {
+    // Skip if cursor is inside an unavailable window
+    const blockingWindow = unavailableWindows.find(w => cursor >= w.start && cursor < w.end);
+    if (blockingWindow) {
+      cursor = blockingWindow.end;
       continue;
     }
 
-    // Find the next upcoming unavailable window after curr
-    const nextWin = unavailableWindows.find(w => w.start > curr);
-    const maxContinuousWork = nextWin ? Math.min(remainingMinutes, nextWin.start - curr) : remainingMinutes;
+    // Find the next unavailable window after cursor
+    const nextWindow = unavailableWindows.find(w => w.start > cursor);
+    const maxContinuousWork = nextWindow
+      ? Math.min(remainingMinutes, nextWindow.start - cursor)
+      : remainingMinutes;
 
     if (maxContinuousWork <= 0) {
-      if (nextWin) {
-        curr = nextWin.end;
-      } else {
-        break;
-      }
+      cursor = nextWindow ? nextWindow.end : shiftDuration;
       continue;
     }
 
-    const segEnd = curr + maxContinuousWork;
-    if (segEnd > shiftDuration) {
-      const actualWork = shiftDuration - curr;
+    const segmentEnd = cursor + maxContinuousWork;
+
+    // Segment exceeds shift end – truncate and report incomplete
+    if (segmentEnd > shiftDuration) {
+      const actualWork = shiftDuration - cursor;
       if (actualWork > 0) {
-        segments.push({ start: curr, end: shiftDuration });
+        segments.push({ start: cursor, end: shiftDuration });
       }
-      return null; // Truncated/incomplete
+      return null;
     }
 
-    segments.push({ start: curr, end: segEnd });
+    segments.push({ start: cursor, end: segmentEnd });
     remainingMinutes -= maxContinuousWork;
-    curr = segEnd;
+    cursor = segmentEnd;
   }
 
+  // Could not fit full duration within shift
   if (remainingMinutes > 0) {
-    return null; // Could not fit full duration within shift
+    return null;
   }
 
-  return { segments, finishTime: curr };
+  return { segments, finishTime: cursor };
 }
 
-/**
- * Calculate available machines matching or exceeding the press capacity requirement
- */
+// ---------------------------------------------------------------------------
+// Machine suitability
+// ---------------------------------------------------------------------------
+
+/** Return machines that meet or exceed the required press capacity, sorted ascending */
 export function getSuitableMachines(requiredPress: string, machines: Machine[]): Machine[] {
-  const reqCapacity = parseMachineCapacity(requiredPress);
-  if (reqCapacity === 0) return [];
+  const requiredCapacity = parseMachineCapacity(requiredPress);
+  if (requiredCapacity === 0) return [];
 
   return machines
-    .filter(m => m.capacity >= reqCapacity)
+    .filter(m => m.capacity >= requiredCapacity)
     .sort((a, b) => a.capacity - b.capacity);
 }
 
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+interface ScheduleCandidate {
+  partIndex: number;
+  part: Part;
+  opIndex: number;
+  operation: Part['operations'][0];
+  bestMachine: Machine;
+  dieAlloc: { segments: TimeWindow[]; finishTime: number };
+  prodAlloc: { segments: TimeWindow[]; finishTime: number };
+  machineFreeAfter: number;
+  earliestFinish: number;
+}
+
+// ---------------------------------------------------------------------------
+// Main scheduler
+// ---------------------------------------------------------------------------
+
 /**
- * Parallel Priority-Based Job Shop Production Scheduler
+ * Parallel Priority-Based Job Shop Production Scheduler.
+ *
+ * Dispatches operations across available machines using an event-driven
+ * approach that maximises machine utilisation while respecting:
+ *   - Per-part operation sequence (Op N must complete before Op N+1)
+ *   - Break windows (all machines pause during break)
+ *   - Machine downtime and free-up constraints
+ *   - Priority ordering of parts
  */
 export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
   const {
     partsData,
     machinesData,
     productionShiftDuration,
-    breakTime = { start: 240, end: 270 }, // Default 1:00 PM - 1:30 PM for a 9:00 AM shift (240 to 270 mins)
+    breakTime = { start: 240, end: 270 }, // Default 1:00 PM – 1:30 PM (for 9:00 AM shift)
     freeUpMachineConstraints,
     elapsedTimeSinceShiftStart = 0,
     currentProductionPlan,
@@ -193,53 +243,39 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
 
   const sortedParts = [...partsData].sort((a, b) => a.priority - b.priority);
 
-  // Build unavailable windows for each machine
+  // ---- Build unavailable windows for each machine ----
   const machineUnavailableWindows = new Map<string, TimeWindow[]>();
-  for (const m of machinesData) {
+  for (const machine of machinesData) {
     machineUnavailableWindows.set(
-      m.machineName,
-      buildMachineUnavailableWindows(m, productionShiftDuration, breakTime, freeUpMachineConstraints)
+      machine.machineName,
+      buildMachineUnavailableWindows(machine, productionShiftDuration, breakTime, freeUpMachineConstraints),
     );
   }
 
-  // Track availability end time for each machine (when die removal finishes)
+  // ---- Track when each machine becomes free ----
   const machineBusyUntil = new Map<string, number>();
-  for (const m of machinesData) {
-    machineBusyUntil.set(m.machineName, 0);
+  for (const machine of machinesData) {
+    machineBusyUntil.set(machine.machineName, 0);
   }
 
-  // If adjusting plan, preserve locked tasks before elapsedTime
+  // ---- Preserve locked tasks when adjusting an existing plan ----
   const productionPlan: ProductionPlanItem[] = [];
   let globalExecutionOrder = 1;
 
   if (currentProductionPlan && elapsedTimeSinceShiftStart > 0) {
     const lockedWindowEnd = elapsedTimeSinceShiftStart + 15;
-    const lockedTasks = currentProductionPlan.productionPlan.filter(t => t.startTime < lockedWindowEnd);
+    const lockedTasks = currentProductionPlan.productionPlan.filter(
+      t => t.startTime < lockedWindowEnd,
+    );
 
     for (const task of lockedTasks) {
-      productionPlan.push({
-        ...task,
-        executionOrder: globalExecutionOrder++,
-      });
+      productionPlan.push({ ...task, executionOrder: globalExecutionOrder++ });
       const busy = machineBusyUntil.get(task.machineName) || 0;
       machineBusyUntil.set(task.machineName, Math.max(busy, task.endTime));
     }
   }
 
-  // Parallel Scheduling Data Structures
-  interface CandidateCandidate {
-    partIndex: number;
-    part: Part;
-    opIndex: number;
-    operation: Part['operations'][0];
-    bestMachine: Machine;
-    dieAlloc: { segments: TimeWindow[]; finishTime: number };
-    prodAlloc: { segments: TimeWindow[]; finishTime: number };
-    machineFreeAfter: number;
-    earliestFinish: number;
-  }
-
-  // Track state for each part
+  // ---- Per-part scheduling state ----
   const nextOpIndexMap = new Map<string, number>();
   const partReadyTimeMap = new Map<string, number>();
   const partTotalOpsCount = new Map<string, number>();
@@ -247,78 +283,88 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
   for (const part of sortedParts) {
     nextOpIndexMap.set(part.id, 0);
     partReadyTimeMap.set(part.id, elapsedTimeSinceShiftStart);
-    const activeOps = part.selectedOperations && part.selectedOperations.length > 0
-      ? part.selectedOperations
-      : part.operations;
+
+    const activeOps =
+      part.selectedOperations && part.selectedOperations.length > 0
+        ? part.selectedOperations
+        : part.operations;
     partTotalOpsCount.set(part.id, activeOps.length);
   }
 
   const pendingOperations: Array<{ partName: string; operationName: string; reason: string }> = [];
 
-  // Loop until no more eligible operations across any part can be scheduled
+  // ---- Greedy dispatch loop ----
   while (true) {
-    let bestCandidate: CandidateCandidate | null = null;
+    let bestCandidate: ScheduleCandidate | null = null;
 
-    // Evaluate all parts that still have unassigned operations
     for (let pIdx = 0; pIdx < sortedParts.length; pIdx++) {
       const part = sortedParts[pIdx];
       const targetQty = part.quantityToProduce || 0;
       if (targetQty <= 0) continue;
 
-      const currOpIdx = nextOpIndexMap.get(part.id) || 0;
-      const activeOps = part.selectedOperations && part.selectedOperations.length > 0
-        ? part.selectedOperations
-        : part.operations;
+      const currentOpIndex = nextOpIndexMap.get(part.id) || 0;
+      const activeOps =
+        part.selectedOperations && part.selectedOperations.length > 0
+          ? part.selectedOperations
+          : part.operations;
 
-      if (currOpIdx >= activeOps.length) continue; // All operations for this part scheduled
+      // All operations for this part already scheduled
+      if (currentOpIndex >= activeOps.length) continue;
 
-      const operation = activeOps[currOpIdx];
+      const operation = activeOps[currentOpIndex];
       const partReadyTime = partReadyTimeMap.get(part.id) || elapsedTimeSinceShiftStart;
       const actualAlreadyProduced = part.actualQuantityProduced || 0;
-      const remainingQtyNeeded = Math.max(0, targetQty - actualAlreadyProduced);
-      const qtyToSchedule = remainingQtyNeeded > 0 ? remainingQtyNeeded : targetQty;
+      const remainingQty = Math.max(0, targetQty - actualAlreadyProduced);
+      const qtyToSchedule = remainingQty > 0 ? remainingQty : targetQty;
 
-      const totalProdMinutes = qtyToSchedule > 0
-        ? Math.ceil((qtyToSchedule / 50) * operation.timeFor50Pcs)
-        : operation.timeFor50Pcs;
+      const totalProdMinutes =
+        qtyToSchedule > 0
+          ? Math.ceil((qtyToSchedule / 50) * operation.timeFor50Pcs)
+          : operation.timeFor50Pcs;
 
       const suitableMachines = getSuitableMachines(operation.lowestPress, machinesData);
+      if (suitableMachines.length === 0) continue;
 
-      if (suitableMachines.length === 0) {
-        continue;
-      }
+      // Evaluate each suitable machine for this operation
+      for (const candidateMachine of suitableMachines) {
+        const busyUntil = machineBusyUntil.get(candidateMachine.machineName) || 0;
+        const candidateStart = Math.max(partReadyTime, busyUntil);
+        const windows = machineUnavailableWindows.get(candidateMachine.machineName) || [];
 
-      // Test all suitable machines for this eligible operation
-      for (const candidate of suitableMachines) {
-        const busyTime = machineBusyUntil.get(candidate.machineName) || 0;
-        const candidateStart = Math.max(partReadyTime, busyTime);
-        const windows = machineUnavailableWindows.get(candidate.machineName) || [];
-
-        // Allocate Die Setting
-        const dieAlloc = allocateWorkingSegments(candidateStart, operation.dieSettingTime, productionShiftDuration, windows);
+        // Allocate die setting
+        const dieAlloc = allocateWorkingSegments(
+          candidateStart, operation.dieSettingTime, productionShiftDuration, windows,
+        );
         if (!dieAlloc) continue;
 
-        // Allocate Production
-        const prodAlloc = allocateWorkingSegments(dieAlloc.finishTime, totalProdMinutes, productionShiftDuration, windows);
+        // Allocate production
+        const prodAlloc = allocateWorkingSegments(
+          dieAlloc.finishTime, totalProdMinutes, productionShiftDuration, windows,
+        );
         if (!prodAlloc) continue;
 
-        // Allocate Die Removal
-        const dieRemoval = getDieRemovalTime(candidate.capacity);
-        const dieRemovalAlloc = allocateWorkingSegments(prodAlloc.finishTime, dieRemoval, productionShiftDuration, windows);
-        const freeAfter = dieRemovalAlloc ? dieRemovalAlloc.finishTime : prodAlloc.finishTime + dieRemoval;
+        // Allocate die removal (non-blocking – machine just becomes busy)
+        const dieRemoval = getDieRemovalTime(candidateMachine.capacity);
+        const dieRemovalAlloc = allocateWorkingSegments(
+          prodAlloc.finishTime, dieRemoval, productionShiftDuration, windows,
+        );
+        const freeAfter = dieRemovalAlloc
+          ? dieRemovalAlloc.finishTime
+          : prodAlloc.finishTime + dieRemoval;
 
-        // Pick candidate with earliest production completion time
+        // Pick candidate with earliest production finish (ties broken by priority)
         if (
           !bestCandidate ||
           prodAlloc.finishTime < bestCandidate.earliestFinish ||
-          (prodAlloc.finishTime === bestCandidate.earliestFinish && part.priority < bestCandidate.part.priority)
+          (prodAlloc.finishTime === bestCandidate.earliestFinish &&
+            part.priority < bestCandidate.part.priority)
         ) {
           bestCandidate = {
             partIndex: pIdx,
             part,
-            opIndex: currOpIdx,
+            opIndex: currentOpIndex,
             operation,
-            bestMachine: candidate,
+            bestMachine: candidateMachine,
             dieAlloc,
             prodAlloc,
             machineFreeAfter: freeAfter,
@@ -328,19 +374,18 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       }
     }
 
-    if (!bestCandidate) {
-      // No more operations can be scheduled
-      break;
-    }
+    // No more operations can be scheduled
+    if (!bestCandidate) break;
 
-    // Schedule the winning candidate operation
-    const { part, operation, bestMachine, dieAlloc, prodAlloc, machineFreeAfter, opIndex } = bestCandidate;
+    // ---- Commit the winning candidate ----
+    const { part, operation, bestMachine, dieAlloc, prodAlloc, machineFreeAfter, opIndex } =
+      bestCandidate;
     const targetQty = part.quantityToProduce || 0;
     const actualAlreadyProduced = part.actualQuantityProduced || 0;
-    const remainingQtyNeeded = Math.max(0, targetQty - actualAlreadyProduced);
-    const qtyToSchedule = remainingQtyNeeded > 0 ? remainingQtyNeeded : targetQty;
+    const remainingQty = Math.max(0, targetQty - actualAlreadyProduced);
+    const qtyToSchedule = remainingQty > 0 ? remainingQty : targetQty;
 
-    // 1. Add Die Setting segments
+    // Add die setting segments
     for (const seg of dieAlloc.segments) {
       productionPlan.push({
         partName: part.partName,
@@ -354,23 +399,27 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       });
     }
 
-    // 2. Add Production segments
-    const totalProdSegMins = prodAlloc.segments.reduce((s, seg) => s + (seg.end - seg.start), 0);
+    // Add production segments (distribute quantity proportionally across segments)
+    const totalProdSegMins = prodAlloc.segments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
+    let producedSoFar = 0;
 
     for (let i = 0; i < prodAlloc.segments.length; i++) {
       const seg = prodAlloc.segments[i];
       const segMins = seg.end - seg.start;
-      const segQty = i === prodAlloc.segments.length - 1
-        ? qtyToSchedule - productionPlan
-            .filter(p => p.partName === part.partName && p.operationName === operation.stepName && p.taskType === 'Production')
-            .reduce((s, p) => s + p.quantity, 0)
+      const isLastSegment = i === prodAlloc.segments.length - 1;
+
+      const segQty = isLastSegment
+        ? qtyToSchedule - producedSoFar
         : Math.round((segMins / totalProdSegMins) * qtyToSchedule);
+
+      const finalQty = Math.max(1, segQty);
+      producedSoFar += finalQty;
 
       productionPlan.push({
         partName: part.partName,
         operationName: operation.stepName,
         machineName: bestMachine.machineName,
-        quantity: Math.max(1, segQty),
+        quantity: finalQty,
         startTime: seg.start,
         endTime: seg.end,
         taskType: 'Production',
@@ -378,33 +427,37 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       });
     }
 
-    // Update state: next operation for this part can only start after prodAlloc.finishTime
+    // Update scheduling state
     machineBusyUntil.set(bestMachine.machineName, machineFreeAfter);
     partReadyTimeMap.set(part.id, prodAlloc.finishTime);
     nextOpIndexMap.set(part.id, opIndex + 1);
   }
 
-  // Sort final production plan chronologically for clean rendering
+  // ---- Sort plan chronologically and reassign execution orders ----
   productionPlan.sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
   productionPlan.forEach((task, idx) => {
     task.executionOrder = idx + 1;
   });
 
-  // Check for incomplete operations
-  const partCompletionStatus = new Map<string, { totalQty: number; producedQty: number; isComplete: boolean }>();
+  // ---- Identify incomplete operations ----
+  const partCompletionStatus = new Map<
+    string,
+    { totalQty: number; producedQty: number; isComplete: boolean }
+  >();
 
   for (const part of sortedParts) {
     const targetQty = part.quantityToProduce || 0;
     const actualAlreadyProduced = part.actualQuantityProduced || 0;
-    const currScheduledOpIdx = nextOpIndexMap.get(part.id) || 0;
+    const scheduledOpIndex = nextOpIndexMap.get(part.id) || 0;
     const totalOps = partTotalOpsCount.get(part.id) || 0;
-    const isComplete = totalOps > 0 && currScheduledOpIdx >= totalOps;
+    const isComplete = totalOps > 0 && scheduledOpIndex >= totalOps;
 
     if (!isComplete && totalOps > 0) {
-      const activeOps = part.selectedOperations && part.selectedOperations.length > 0
-        ? part.selectedOperations
-        : part.operations;
-      const unscheduledOp = activeOps[currScheduledOpIdx];
+      const activeOps =
+        part.selectedOperations && part.selectedOperations.length > 0
+          ? part.selectedOperations
+          : part.operations;
+      const unscheduledOp = activeOps[scheduledOpIndex];
       if (unscheduledOp) {
         pendingOperations.push({
           partName: part.partName,
@@ -421,7 +474,7 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
     });
   }
 
-  // Calculate metrics
+  // ---- Calculate summary metrics ----
   let totalPartsRequired = 0;
   let totalPartsProduced = 0;
   let fullyCompletedPartsCount = 0;
@@ -435,19 +488,20 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
   const totalPartsCount = sortedParts.length;
   const incompletePartsCount = totalPartsCount - fullyCompletedPartsCount;
   const totalPartsRemaining = Math.max(0, totalPartsRequired - totalPartsProduced);
-  const overallProgressPercentage = totalPartsRequired > 0
-    ? parseFloat(((totalPartsProduced / totalPartsRequired) * 100).toFixed(1))
-    : 0;
+  const overallProgressPercentage =
+    totalPartsRequired > 0
+      ? parseFloat(((totalPartsProduced / totalPartsRequired) * 100).toFixed(1))
+      : 0;
 
-  const estimatedCompletionTimeMinutes = productionPlan.length > 0
-    ? Math.max(...productionPlan.map(p => p.endTime))
-    : 0;
+  const estimatedCompletionTimeMinutes =
+    productionPlan.length > 0 ? Math.max(...productionPlan.map(p => p.endTime)) : 0;
 
-  // Build summary string
-  const summaryLines: string[] = [];
-  summaryLines.push(`Generated parallel-optimized production plan with ${productionPlan.length} tasks across ${totalPartsCount} parts.`);
-  summaryLines.push(`Progress: ${totalPartsProduced} / ${totalPartsRequired} units (${overallProgressPercentage}% completed).`);
-  summaryLines.push(`Fully completed parts: ${fullyCompletedPartsCount} of ${totalPartsCount}.`);
+  // ---- Build summary string ----
+  const summaryLines: string[] = [
+    `Generated parallel-optimized production plan with ${productionPlan.length} tasks across ${totalPartsCount} parts.`,
+    `Progress: ${totalPartsProduced} / ${totalPartsRequired} units (${overallProgressPercentage}% completed).`,
+    `Fully completed parts: ${fullyCompletedPartsCount} of ${totalPartsCount}.`,
+  ];
 
   if (pendingOperations.length > 0) {
     summaryLines.push(`Pending/Delayed operations: ${pendingOperations.length}.`);

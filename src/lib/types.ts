@@ -30,27 +30,35 @@ export interface BreakTime {
   end: string;
 }
 
-export type BreakTimeMinutes = {
+export interface BreakTimeMinutes {
   start: number;
   end: number;
-};
+}
 
-export type TimeWindow = {
+export interface TimeWindow {
   start: number;
   end: number;
-};
+}
+
+// ---------------------------------------------------------------------------
+// Derived utility types
+// ---------------------------------------------------------------------------
 
 export type PartData = Omit<Part, 'id' | 'selectedOperations'>;
 export type MachineData = Omit<Machine, 'id' | 'downtimeStartTimestamp'>;
 
-export type PlanConfig = {
+// ---------------------------------------------------------------------------
+// Plan configuration & output types
+// ---------------------------------------------------------------------------
+
+export interface PlanConfig {
   partsData: Part[];
   machinesData: Machine[];
   productionShiftDuration: number;
   startTime?: string;
   breakTime?: BreakTimeMinutes;
   historicalProductionData?: string;
-};
+}
 
 export interface ProductionPlanItem {
   partName: string;
@@ -63,7 +71,7 @@ export interface ProductionPlanItem {
   executionOrder?: number;
 }
 
-export type ProductionPlanMetrics = {
+export interface ProductionPlanMetrics {
   totalPartsRequired: number;
   totalPartsProduced: number;
   totalPartsRemaining: number;
@@ -73,13 +81,17 @@ export type ProductionPlanMetrics = {
   overallProgressPercentage: number;
   estimatedCompletionTimeMinutes: number;
   pendingOperations: Array<{ partName: string; operationName: string; reason: string }>;
-};
+}
 
-export type ProductionPlan = {
+export interface ProductionPlan {
   productionPlan: ProductionPlanItem[];
   summary: string;
   metrics?: ProductionPlanMetrics;
-};
+}
+
+// ---------------------------------------------------------------------------
+// Insights & reporting types
+// ---------------------------------------------------------------------------
 
 export interface PlanInsightsOutput {
   machineUtilization: Array<{
@@ -114,14 +126,18 @@ export interface DiscrepancyReportOutput {
 
 export type DiscrepancyReport = DiscrepancyReportOutput;
 
-export type GenerateProductionPlanOutput = {
-  productionPlan: ProductionPlanItem[];
-  summary: string;
-  metrics?: ProductionPlanMetrics;
-};
+// ---------------------------------------------------------------------------
+// Server action output types
+// ---------------------------------------------------------------------------
 
-export type GenerateAdjustedPlanOutput = {
+export interface GenerateProductionPlanOutput {
   productionPlan: ProductionPlanItem[];
   summary: string;
   metrics?: ProductionPlanMetrics;
-};
+}
+
+export interface GenerateAdjustedPlanOutput {
+  productionPlan: ProductionPlanItem[];
+  summary: string;
+  metrics?: ProductionPlanMetrics;
+}
