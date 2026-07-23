@@ -43,5 +43,6 @@ export async function generateAdjustedPlan(input: {
     productionPlan: result.productionPlan,
     summary: result.summary,
     metrics: result.metrics,
+    partStatuses: result.partStatuses,
   };
 }

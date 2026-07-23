@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import type { ProductionPlan, Machine, PlanInsights, ProductionPlanItem, ProductionPlanMetrics } from "@/lib/types";
+import type { ProductionPlan, Machine, PlanInsights, ProductionPlanItem, ProductionPlanMetrics, PartScheduleStatus } from "@/lib/types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download, BarChart2, GanttChartSquare, CheckCircle2, Clock, AlertTriangle, Layers, Filter } from "lucide-react";
+import { Download, BarChart2, GanttChartSquare, CheckCircle2, Clock, AlertTriangle, Layers, Filter, Info } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import * as XLSX from "xlsx";
@@ -23,6 +23,26 @@ interface PlanDisplayProps {
   machines: Machine[];
   shiftDuration: number;
   shiftStartTime: string;
+}
+
+/** Helper to get badge color based on part schedule status */
+function getStatusColor(status: string): { badge: string } {
+  switch (status) {
+    case 'Completed':
+      return { badge: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20' };
+    case 'In Progress':
+      return { badge: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20' };
+    case 'Scheduled Partially':
+      return { badge: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20' };
+    case 'Waiting for Previous Process':
+      return { badge: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20' };
+    case 'Waiting for Machine':
+      return { badge: 'bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/20' };
+    case 'Could Not Be Fully Scheduled in Current Shift':
+      return { badge: 'bg-destructive/10 text-destructive border-destructive/20' };
+    default:
+      return { badge: 'bg-muted/10 text-muted-foreground border-muted/20' };
+  }
 }
 
 export function PlanDisplay({
@@ -127,6 +147,41 @@ export function PlanDisplay({
                     </li>
                   ))}
                 </ul>
+              </div>
+            </div>
+          )}
+
+          {/* Part Schedule Statuses */}
+          {plan.partStatuses && plan.partStatuses.length > 0 && (
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <Info className="h-4 w-4 text-primary" />
+                Part Schedule Status
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {plan.partStatuses.map((ps) => {
+                  const statusColor = getStatusColor(ps.status);
+                  return (
+                    <div key={ps.partName} className="p-3 rounded-lg border bg-card/50 flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-sm">{ps.partName}</span>
+                        <Badge className={`text-[10px] px-2 py-0 ${statusColor.badge}`}>
+                          {ps.status}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Operations: {ps.completedOperations} / {ps.totalOperations}</span>
+                        <span>Remaining: {ps.remainingQuantity} / {ps.totalQuantity}</span>
+                      </div>
+                      {ps.status !== 'Completed' && ps.status !== 'In Progress' && (
+                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
+                          <Clock className="h-3 w-3" />
+                          <span>{ps.status === 'Waiting for Machine' ? 'Awaiting machine availability' : ps.status === 'Waiting for Previous Process' ? 'Waiting for prior operation to complete' : ps.status === 'Could Not Be Fully Scheduled in Current Shift' ? 'Insufficient shift time remaining' : ''}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

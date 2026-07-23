@@ -37,5 +37,6 @@ export async function generateProductionPlan(
     productionPlan: result.productionPlan,
     summary: result.summary,
     metrics: result.metrics,
+    partStatuses: result.partStatuses,
   };
 }

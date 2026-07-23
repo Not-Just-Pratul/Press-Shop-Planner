@@ -83,10 +83,20 @@ export interface ProductionPlanMetrics {
   pendingOperations: Array<{ partName: string; operationName: string; reason: string }>;
 }
 
+export interface PartScheduleStatus {
+  partName: string;
+  totalOperations: number;
+  completedOperations: number;
+  status: 'Completed' | 'In Progress' | 'Scheduled Partially' | 'Waiting for Previous Process' | 'Waiting for Machine' | 'Could Not Be Fully Scheduled in Current Shift';
+  totalQuantity: number;
+  remainingQuantity: number;
+}
+
 export interface ProductionPlan {
   productionPlan: ProductionPlanItem[];
   summary: string;
   metrics?: ProductionPlanMetrics;
+  partStatuses?: PartScheduleStatus[];
 }
 
 // ---------------------------------------------------------------------------
@@ -134,10 +144,12 @@ export interface GenerateProductionPlanOutput {
   productionPlan: ProductionPlanItem[];
   summary: string;
   metrics?: ProductionPlanMetrics;
+  partStatuses?: PartScheduleStatus[];
 }
 
 export interface GenerateAdjustedPlanOutput {
   productionPlan: ProductionPlanItem[];
   summary: string;
   metrics?: ProductionPlanMetrics;
+  partStatuses?: PartScheduleStatus[];
 }

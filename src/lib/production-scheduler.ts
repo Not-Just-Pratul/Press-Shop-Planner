@@ -1,4 +1,4 @@
-import type { Part, Machine, ProductionPlanItem, TimeWindow } from './types';
+import type { Part, Machine, ProductionPlanItem, TimeWindow, PartScheduleStatus } from './types';
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -28,6 +28,7 @@ export interface SchedulerOutput {
     estimatedCompletionTimeMinutes: number;
     pendingOperations: Array<{ partName: string; operationName: string; reason: string }>;
   };
+  partStatuses: PartScheduleStatus[];
 }
 
 // ---------------------------------------------------------------------------
@@ -204,16 +205,17 @@ export function getSuitableMachines(requiredPress: string, machines: Machine[]):
 // Internal types
 // ---------------------------------------------------------------------------
 
-interface ScheduleCandidate {
-  partIndex: number;
+interface OperationAssignment {
   part: Part;
+  partIndex: number;
   opIndex: number;
   operation: Part['operations'][0];
+  targetQty: number;
   bestMachine: Machine;
   dieAlloc: { segments: TimeWindow[]; finishTime: number };
   prodAlloc: { segments: TimeWindow[]; finishTime: number };
+  dieRemovalAlloc: { segments: TimeWindow[]; finishTime: number };
   machineFreeAfter: number;
-  earliestFinish: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,14 +223,18 @@ interface ScheduleCandidate {
 // ---------------------------------------------------------------------------
 
 /**
- * Parallel Priority-Based Job Shop Production Scheduler.
+ * Parallel Multi-Part Production Scheduler.
  *
- * Dispatches operations across available machines using an event-driven
- * approach that maximises machine utilisation while respecting:
- *   - Per-part operation sequence (Op N must complete before Op N+1)
- *   - Break windows (all machines pause during break)
- *   - Machine downtime and free-up constraints
- *   - Priority ordering of parts
+ * Uses a machine-centric dispatch loop: for each free machine, find the best
+ * eligible operation from any part whose previous operations are complete.
+ * This ensures maximum machine utilization and true parallel execution.
+ *
+ * Key behaviors:
+ *   - Every free machine picks up work immediately if eligible ops exist
+ *   - Per-part process sequence is strictly enforced
+ *   - Break windows, downtime, and constraints are respected
+ *   - Priority ordering determines which operation runs first on a machine
+ *   - Detailed status reporting for every part
  */
 export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
   const {
@@ -258,6 +264,9 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
     machineBusyUntil.set(machine.machineName, 0);
   }
 
+  // ---- Sort machines by capacity ascending for deterministic dispatch ----
+  const sortedMachines = [...machinesData].sort((a, b) => a.capacity - b.capacity);
+
   // ---- Preserve locked tasks when adjusting an existing plan ----
   const productionPlan: ProductionPlanItem[] = [];
   let globalExecutionOrder = 1;
@@ -279,10 +288,12 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
   const nextOpIndexMap = new Map<string, number>();
   const partReadyTimeMap = new Map<string, number>();
   const partTotalOpsCount = new Map<string, number>();
+  const partProducedQty = new Map<string, number>();
 
   for (const part of sortedParts) {
     nextOpIndexMap.set(part.id, 0);
     partReadyTimeMap.set(part.id, elapsedTimeSinceShiftStart);
+    partProducedQty.set(part.id, part.actualQuantityProduced || 0);
 
     const activeOps =
       part.selectedOperations && part.selectedOperations.length > 0
@@ -293,104 +304,190 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
 
   const pendingOperations: Array<{ partName: string; operationName: string; reason: string }> = [];
 
-  // ---- Greedy dispatch loop ----
-  while (true) {
-    let bestCandidate: ScheduleCandidate | null = null;
+  // -----------------------------------------------------------------------
+  // Helper: Try to schedule the next operation of a part on a specific machine
+  // -----------------------------------------------------------------------
+  function tryScheduleOperation(
+    part: Part,
+    currentOpIndex: number,
+    machine: Machine,
+    candidateStart: number,
+  ): OperationAssignment | null {
+    const activeOps =
+      part.selectedOperations && part.selectedOperations.length > 0
+        ? part.selectedOperations
+        : part.operations;
 
-    for (let pIdx = 0; pIdx < sortedParts.length; pIdx++) {
-      const part = sortedParts[pIdx];
-      const targetQty = part.quantityToProduce || 0;
-      if (targetQty <= 0) continue;
+    const operation = activeOps[currentOpIndex];
+    const targetQty = part.quantityToProduce || 0;
+    const alreadyProduced = partProducedQty.get(part.id) || 0;
+    const remainingQty = Math.max(0, targetQty - alreadyProduced);
+    const qtyToSchedule = remainingQty > 0 ? remainingQty : targetQty;
 
-      const currentOpIndex = nextOpIndexMap.get(part.id) || 0;
-      const activeOps =
-        part.selectedOperations && part.selectedOperations.length > 0
-          ? part.selectedOperations
-          : part.operations;
+    const totalProdMinutes =
+      qtyToSchedule > 0
+        ? Math.ceil((qtyToSchedule / 50) * operation.timeFor50Pcs)
+        : operation.timeFor50Pcs;
 
-      // All operations for this part already scheduled
-      if (currentOpIndex >= activeOps.length) continue;
+    const windows = machineUnavailableWindows.get(machine.machineName) || [];
 
-      const operation = activeOps[currentOpIndex];
-      const partReadyTime = partReadyTimeMap.get(part.id) || elapsedTimeSinceShiftStart;
-      const actualAlreadyProduced = part.actualQuantityProduced || 0;
-      const remainingQty = Math.max(0, targetQty - actualAlreadyProduced);
-      const qtyToSchedule = remainingQty > 0 ? remainingQty : targetQty;
+    // Allocate die setting
+    const dieAlloc = allocateWorkingSegments(
+      candidateStart, operation.dieSettingTime, productionShiftDuration, windows,
+    );
+    if (!dieAlloc) return null;
 
-      const totalProdMinutes =
-        qtyToSchedule > 0
-          ? Math.ceil((qtyToSchedule / 50) * operation.timeFor50Pcs)
-          : operation.timeFor50Pcs;
+    // Allocate production
+    const prodAlloc = allocateWorkingSegments(
+      dieAlloc.finishTime, totalProdMinutes, productionShiftDuration, windows,
+    );
+    if (!prodAlloc) return null;
 
-      const suitableMachines = getSuitableMachines(operation.lowestPress, machinesData);
-      if (suitableMachines.length === 0) continue;
+    // Allocate die removal
+    const dieRemoval = getDieRemovalTime(machine.capacity);
+    const dieRemovalAlloc = allocateWorkingSegments(
+      prodAlloc.finishTime, dieRemoval, productionShiftDuration, windows,
+    );
+    if (!dieRemovalAlloc) return null;
 
-      // Evaluate each suitable machine for this operation
-      for (const candidateMachine of suitableMachines) {
-        const busyUntil = machineBusyUntil.get(candidateMachine.machineName) || 0;
-        const candidateStart = Math.max(partReadyTime, busyUntil);
-        const windows = machineUnavailableWindows.get(candidateMachine.machineName) || [];
+    return {
+      part,
+      partIndex: sortedParts.indexOf(part),
+      opIndex: currentOpIndex,
+      operation,
+      targetQty: qtyToSchedule,
+      bestMachine: machine,
+      dieAlloc,
+      prodAlloc,
+      dieRemovalAlloc,
+      machineFreeAfter: dieRemovalAlloc.finishTime,
+    };
+  }
 
-        // Allocate die setting
-        const dieAlloc = allocateWorkingSegments(
-          candidateStart, operation.dieSettingTime, productionShiftDuration, windows,
+  // -----------------------------------------------------------------------
+  // Parallel Dispatch Loop
+  // -----------------------------------------------------------------------
+  // In each pass, iterate over every machine. For each machine that is free,
+  // find the best eligible operation from any ready part and schedule it.
+  // This ensures all machines are kept busy when work is available.
+  // -----------------------------------------------------------------------
+
+  let iterationsWithoutWork = 0;
+  const MAX_IDLE_ITERATIONS = 50; // Safety limit
+
+  while (iterationsWithoutWork < MAX_IDLE_ITERATIONS) {
+    let scheduledInThisPass = false;
+
+    // For this pass, snapshot which machines are currently available
+    // so we don't double-schedule the same machine
+    const machinesToCheck = new Set(sortedMachines.map(m => m.machineName));
+
+    for (const machine of sortedMachines) {
+      if (!machinesToCheck.has(machine.machineName)) continue;
+
+      const machineFreeTime = machineBusyUntil.get(machine.machineName) || 0;
+
+      // Skip if machine is not free at current time
+      // (it may have been assigned work earlier in this pass)
+      // We advance candidate start to machineFreeTime
+
+      // Find the best eligible operation for this machine
+      let bestAssignment: OperationAssignment | null = null;
+      let bestPriority = Infinity;
+
+      for (let pIdx = 0; pIdx < sortedParts.length; pIdx++) {
+        const part = sortedParts[pIdx];
+        const targetQty = part.quantityToProduce || 0;
+        if (targetQty <= 0) continue;
+
+        const currentOpIndex = nextOpIndexMap.get(part.id) || 0;
+        const activeOps =
+          part.selectedOperations && part.selectedOperations.length > 0
+            ? part.selectedOperations
+            : part.operations;
+
+        // All operations for this part already scheduled
+        if (currentOpIndex >= activeOps.length) continue;
+
+        const partReadyTime = partReadyTimeMap.get(part.id) || elapsedTimeSinceShiftStart;
+
+        // Part's previous operation hasn't completed yet - can't schedule
+        if (partReadyTime > machineFreeTime) continue;
+
+        const operation = activeOps[currentOpIndex];
+
+        // Check if this machine is suitable (capacity >= required)
+        const requiredCapacity = parseMachineCapacity(operation.lowestPress);
+        if (machine.capacity < requiredCapacity) continue;
+
+        // Try to schedule this operation on this machine
+        const assignment = tryScheduleOperation(
+          part, currentOpIndex, machine, machineFreeTime,
         );
-        if (!dieAlloc) continue;
 
-        // Allocate production
-        const prodAlloc = allocateWorkingSegments(
-          dieAlloc.finishTime, totalProdMinutes, productionShiftDuration, windows,
-        );
-        if (!prodAlloc) continue;
+        if (!assignment) continue;
 
-        // Allocate die removal (non-blocking – machine just becomes busy)
-        const dieRemoval = getDieRemovalTime(candidateMachine.capacity);
-        const dieRemovalAlloc = allocateWorkingSegments(
-          prodAlloc.finishTime, dieRemoval, productionShiftDuration, windows,
-        );
-        const freeAfter = dieRemovalAlloc
-          ? dieRemovalAlloc.finishTime
-          : prodAlloc.finishTime + dieRemoval;
-
-        // Pick candidate with earliest production finish (ties broken by priority)
-        if (
-          !bestCandidate ||
-          prodAlloc.finishTime < bestCandidate.earliestFinish ||
-          (prodAlloc.finishTime === bestCandidate.earliestFinish &&
-            part.priority < bestCandidate.part.priority)
-        ) {
-          bestCandidate = {
-            partIndex: pIdx,
-            part,
-            opIndex: currentOpIndex,
-            operation,
-            bestMachine: candidateMachine,
-            dieAlloc,
-            prodAlloc,
-            machineFreeAfter: freeAfter,
-            earliestFinish: prodAlloc.finishTime,
-          };
+        // Pick by priority (lower number = higher priority)
+        // If same priority, pick the one that came first (smaller part index)
+        if (part.priority < bestPriority) {
+          bestAssignment = assignment;
+          bestPriority = part.priority;
         }
+      }
+
+      // If we found work for this machine, commit it
+      if (bestAssignment) {
+        commitAssignment(bestAssignment);
+        // Mark this machine as taken for this pass
+        machinesToCheck.delete(machine.machineName);
+        scheduledInThisPass = true;
       }
     }
 
-    // No more operations can be scheduled
-    if (!bestCandidate) break;
+    if (!scheduledInThisPass) {
+      iterationsWithoutWork++;
+    } else {
+      iterationsWithoutWork = 0;
+    }
 
-    // ---- Commit the winning candidate ----
-    const { part, operation, bestMachine, dieAlloc, prodAlloc, machineFreeAfter, opIndex } =
-      bestCandidate;
-    const targetQty = part.quantityToProduce || 0;
-    const actualAlreadyProduced = part.actualQuantityProduced || 0;
-    const remainingQty = Math.max(0, targetQty - actualAlreadyProduced);
-    const qtyToSchedule = remainingQty > 0 ? remainingQty : targetQty;
+    // Also try to advance time: if all machines are busy and all parts waiting,
+    // we can advance to the next event time (earliest machine free or part ready)
+    if (!scheduledInThisPass) {
+      // Find earliest machine free time > current time
+      let nextEventTime = productionShiftDuration;
+      for (const machine of machinesData) {
+        const freeTime = machineBusyUntil.get(machine.machineName) || 0;
+        if (freeTime > 0 && freeTime < nextEventTime) {
+          nextEventTime = freeTime;
+        }
+      }
+      // Find earliest part ready time > current time
+      for (const part of sortedParts) {
+        const readyTime = partReadyTimeMap.get(part.id) || 0;
+        if (readyTime > 0 && readyTime < nextEventTime) {
+          nextEventTime = readyTime;
+        }
+      }
+
+      // If no event is beyond current time but before shift end, we're done
+      if (nextEventTime >= productionShiftDuration) {
+        break;
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Helper: commit an assignment to the production plan
+  // -----------------------------------------------------------------------
+  function commitAssignment(assignment: OperationAssignment): void {
+    const { part, operation, opIndex } = assignment;
 
     // Add die setting segments
-    for (const seg of dieAlloc.segments) {
+    for (const seg of assignment.dieAlloc.segments) {
       productionPlan.push({
         partName: part.partName,
         operationName: operation.stepName,
-        machineName: bestMachine.machineName,
+        machineName: assignment.bestMachine?.machineName || '',
         quantity: 0,
         startTime: seg.start,
         endTime: seg.end,
@@ -400,17 +497,22 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
     }
 
     // Add production segments (distribute quantity proportionally across segments)
-    const totalProdSegMins = prodAlloc.segments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
+    const totalProdSegMins = assignment.prodAlloc.segments.reduce(
+      (sum, seg) => sum + (seg.end - seg.start), 0,
+    );
     let producedSoFar = 0;
 
-    for (let i = 0; i < prodAlloc.segments.length; i++) {
-      const seg = prodAlloc.segments[i];
+    // Use a local reference to avoid TypeScript issues with the bestMachine reference
+    const machineName = assignment.bestMachine?.machineName || '';
+
+    for (let i = 0; i < assignment.prodAlloc.segments.length; i++) {
+      const seg = assignment.prodAlloc.segments[i];
       const segMins = seg.end - seg.start;
-      const isLastSegment = i === prodAlloc.segments.length - 1;
+      const isLastSegment = i === assignment.prodAlloc.segments.length - 1;
 
       const segQty = isLastSegment
-        ? qtyToSchedule - producedSoFar
-        : Math.round((segMins / totalProdSegMins) * qtyToSchedule);
+        ? assignment.targetQty - producedSoFar
+        : Math.round((segMins / totalProdSegMins) * assignment.targetQty);
 
       const finalQty = Math.max(1, segQty);
       producedSoFar += finalQty;
@@ -418,7 +520,7 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       productionPlan.push({
         partName: part.partName,
         operationName: operation.stepName,
-        machineName: bestMachine.machineName,
+        machineName: machineName,
         quantity: finalQty,
         startTime: seg.start,
         endTime: seg.end,
@@ -428,16 +530,94 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
     }
 
     // Update scheduling state
-    machineBusyUntil.set(bestMachine.machineName, machineFreeAfter);
-    partReadyTimeMap.set(part.id, prodAlloc.finishTime);
+    if (assignment.bestMachine) {
+      machineBusyUntil.set(assignment.bestMachine.machineName, assignment.machineFreeAfter);
+    }
+    partReadyTimeMap.set(part.id, assignment.prodAlloc.finishTime);
     nextOpIndexMap.set(part.id, opIndex + 1);
   }
 
-  // ---- Sort plan chronologically and reassign execution orders ----
+  // Sort plan chronologically and reassign execution orders
   productionPlan.sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
   productionPlan.forEach((task, idx) => {
     task.executionOrder = idx + 1;
   });
+
+  // ---- Build Part Schedule Statuses ----
+  const partStatuses: PartScheduleStatus[] = [];
+
+  for (const part of sortedParts) {
+    const targetQty = part.quantityToProduce || 0;
+    const totalOps = partTotalOpsCount.get(part.id) || 0;
+    const scheduledOpIndex = nextOpIndexMap.get(part.id) || 0;
+    const completedOps = scheduledOpIndex;
+    const alreadyProduced = partProducedQty.get(part.id) || 0;
+    const producedInPlan = productionPlan
+      .filter(p => p.partName === part.partName && p.taskType === 'Production')
+      .reduce((sum, p) => sum + p.quantity, 0);
+    const totalProduced = alreadyProduced + producedInPlan;
+    const remainingQty = Math.max(0, targetQty - totalProduced);
+
+    let status: PartScheduleStatus['status'];
+    if (totalOps === 0 || completedOps >= totalOps) {
+      status = 'Completed';
+    } else if (completedOps > 0 && completedOps < totalOps) {
+      const partReadyTime = partReadyTimeMap.get(part.id) || 0;
+      if (partReadyTime >= productionShiftDuration) {
+        status = 'Could Not Be Fully Scheduled in Current Shift';
+      } else {
+        // Check if this part's next operation is waiting for a machine
+        const currentOpIndex = nextOpIndexMap.get(part.id) || 0;
+        if (currentOpIndex < totalOps) {
+          const activeOps =
+            part.selectedOperations && part.selectedOperations.length > 0
+              ? part.selectedOperations
+              : part.operations;
+          const nextOp = activeOps[currentOpIndex];
+          const requiredCapacity = parseMachineCapacity(nextOp.lowestPress);
+          const suitableMachines = machinesData.filter(m => m.capacity >= requiredCapacity && m.available);
+          const allSuitableBusy = suitableMachines.every(m => {
+            const busyUntil = machineBusyUntil.get(m.machineName) || 0;
+            const windows = machineUnavailableWindows.get(m.machineName) || [];
+            const partReadyTimeVal = partReadyTimeMap.get(part.id) || 0;
+            // Check if machine is available for the remaining shift
+            const alloc = allocateWorkingSegments(
+              Math.max(partReadyTimeVal, busyUntil),
+              nextOp.dieSettingTime + Math.ceil((targetQty / 50) * nextOp.timeFor50Pcs) + getDieRemovalTime(m.capacity),
+              productionShiftDuration,
+              windows,
+            );
+            return alloc === null;
+          });
+
+          if (allSuitableBusy && suitableMachines.length > 0) {
+            status = 'Waiting for Machine';
+          } else {
+            status = 'Waiting for Previous Process';
+          }
+        } else {
+          status = 'Could Not Be Fully Scheduled in Current Shift';
+        }
+      }
+    } else {
+      // completedOps === 0 && totalOps > 0
+      const partReadyTime = partReadyTimeMap.get(part.id) || 0;
+      if (partReadyTime >= productionShiftDuration) {
+        status = 'Could Not Be Fully Scheduled in Current Shift';
+      } else {
+        status = 'Waiting for Machine';
+      }
+    }
+
+    partStatuses.push({
+      partName: part.partName,
+      totalOperations: totalOps,
+      completedOperations: completedOps,
+      status,
+      totalQuantity: targetQty,
+      remainingQuantity: remainingQty,
+    });
+  }
 
   // ---- Identify incomplete operations ----
   const partCompletionStatus = new Map<
@@ -447,29 +627,48 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
 
   for (const part of sortedParts) {
     const targetQty = part.quantityToProduce || 0;
-    const actualAlreadyProduced = part.actualQuantityProduced || 0;
+    const producedInPlan = productionPlan
+      .filter(p => p.partName === part.partName && p.taskType === 'Production')
+      .reduce((sum, p) => sum + p.quantity, 0);
+    const alreadyProduced = partProducedQty.get(part.id) || 0;
+    const totalProduced = alreadyProduced + producedInPlan;
     const scheduledOpIndex = nextOpIndexMap.get(part.id) || 0;
     const totalOps = partTotalOpsCount.get(part.id) || 0;
-    const isComplete = totalOps > 0 && scheduledOpIndex >= totalOps;
+    const isComplete = totalOps > 0 && scheduledOpIndex >= totalOps && totalProduced >= targetQty;
 
     if (!isComplete && totalOps > 0) {
       const activeOps =
         part.selectedOperations && part.selectedOperations.length > 0
           ? part.selectedOperations
           : part.operations;
-      const unscheduledOp = activeOps[scheduledOpIndex];
-      if (unscheduledOp) {
+      const unscheduledOpIndex = scheduledOpIndex < totalOps ? scheduledOpIndex : totalOps - 1;
+      if (unscheduledOpIndex >= 0 && unscheduledOpIndex < activeOps.length) {
+        const unscheduledOp = activeOps[unscheduledOpIndex];
+        // Determine a more specific reason
+        let reason = `Could not fit operation within shift duration (${productionShiftDuration} mins)`;
+        if (scheduledOpIndex === 0 && totalOps > 0) {
+          // Never started
+          const requiredCapacity = parseMachineCapacity(unscheduledOp.lowestPress);
+          const suitableMachines = machinesData.filter(m => m.capacity >= requiredCapacity && m.available);
+          if (suitableMachines.length === 0) {
+            reason = `No suitable machine available for minimum requirement of ${unscheduledOp.lowestPress}`;
+          } else {
+            reason = `Awaiting machine availability for operation: ${unscheduledOp.stepName}`;
+          }
+        } else if (scheduledOpIndex > 0 && scheduledOpIndex < totalOps) {
+          reason = `Previous operation completed, awaiting machine for: ${unscheduledOp.stepName}`;
+        }
         pendingOperations.push({
           partName: part.partName,
           operationName: unscheduledOp.stepName,
-          reason: `Could not fit operation within shift duration (${productionShiftDuration} mins)`,
+          reason,
         });
       }
     }
 
     partCompletionStatus.set(part.id, {
       totalQty: targetQty,
-      producedQty: isComplete ? targetQty : actualAlreadyProduced,
+      producedQty: totalProduced,
       isComplete,
     });
   }
@@ -498,13 +697,19 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
 
   // ---- Build summary string ----
   const summaryLines: string[] = [
-    `Generated parallel-optimized production plan with ${productionPlan.length} tasks across ${totalPartsCount} parts.`,
+    `Generated parallel multi-part production plan with ${productionPlan.length} tasks across ${totalPartsCount} parts.`,
     `Progress: ${totalPartsProduced} / ${totalPartsRequired} units (${overallProgressPercentage}% completed).`,
     `Fully completed parts: ${fullyCompletedPartsCount} of ${totalPartsCount}.`,
   ];
 
-  if (pendingOperations.length > 0) {
-    summaryLines.push(`Pending/Delayed operations: ${pendingOperations.length}.`);
+  // Add per-part status summary
+  const inProgressParts = partStatuses.filter(p => p.status === 'Waiting for Machine' || p.status === 'Waiting for Previous Process');
+  const partiallyScheduled = partStatuses.filter(p => p.status === 'Could Not Be Fully Scheduled in Current Shift');
+  if (partiallyScheduled.length > 0) {
+    summaryLines.push(`Parts partially scheduled: ${partiallyScheduled.map(p => `${p.partName} (${p.completedOperations}/${p.totalOperations} ops)`).join(', ')}.`);
+  }
+  if (inProgressParts.length > 0) {
+    summaryLines.push(`Parts awaiting resources: ${inProgressParts.map(p => `${p.partName} - ${p.status}`).join(', ')}.`);
   }
 
   return {
@@ -521,5 +726,6 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       estimatedCompletionTimeMinutes,
       pendingOperations,
     },
+    partStatuses,
   };
 }
