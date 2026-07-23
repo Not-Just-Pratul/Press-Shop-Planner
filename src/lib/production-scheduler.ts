@@ -223,11 +223,14 @@ interface OperationAssignment {
 // ---------------------------------------------------------------------------
 
 /**
- * Parallel Multi-Part Production Scheduler.
+ * Event-Driven Parallel Multi-Part Production Scheduler.
  *
- * Uses a machine-centric dispatch loop: for each free machine, find the best
- * eligible operation from any part whose previous operations are complete.
- * This ensures maximum machine utilization and true parallel execution.
+ * Uses a discrete-event simulation approach:
+ *   - Maintains a global currentTime that advances as events occur
+ *   - At each time step, all free machines try to pick up eligible work
+ *   - When no work is possible, time advances to the next event
+ *     (earliest machine free time or part ready time)
+ *   - This ensures machines become available as time progresses
  *
  * Key behaviors:
  *   - Every free machine picks up work immediately if eligible ops exist
@@ -365,33 +368,32 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
   }
 
   // -----------------------------------------------------------------------
-  // Parallel Dispatch Loop
+  // Event-Driven Dispatch Loop
   // -----------------------------------------------------------------------
-  // In each pass, iterate over every machine. For each machine that is free,
-  // find the best eligible operation from any ready part and schedule it.
-  // This ensures all machines are kept busy when work is available.
+  // Maintain a global currentTime. In each iteration:
+  //   1. Find all machines that are free at currentTime
+  //   2. For each free machine, find the best eligible operation
+  //   3. If work was found, commit it and update machine/part state
+  //   4. If no work was found, advance currentTime to the next event
+  //      (earliest machineFreeAfter or partReadyTime)
   // -----------------------------------------------------------------------
 
-  let iterationsWithoutWork = 0;
-  const MAX_IDLE_ITERATIONS = 50; // Safety limit
+  let currentTime = elapsedTimeSinceShiftStart;
+  const MAX_ITERATIONS = 500; // Safety limit
+  let iterationCount = 0;
 
-  while (iterationsWithoutWork < MAX_IDLE_ITERATIONS) {
+  while (currentTime < productionShiftDuration && iterationCount < MAX_ITERATIONS) {
+    iterationCount++;
     let scheduledInThisPass = false;
 
-    // For this pass, snapshot which machines are currently available
-    // so we don't double-schedule the same machine
-    const machinesToCheck = new Set(sortedMachines.map(m => m.machineName));
+    // Find all machines that are free at currentTime
+    const freeMachines = sortedMachines.filter(m => {
+      const busyUntil = machineBusyUntil.get(m.machineName) || 0;
+      return busyUntil <= currentTime;
+    });
 
-    for (const machine of sortedMachines) {
-      if (!machinesToCheck.has(machine.machineName)) continue;
-
-      const machineFreeTime = machineBusyUntil.get(machine.machineName) || 0;
-
-      // Skip if machine is not free at current time
-      // (it may have been assigned work earlier in this pass)
-      // We advance candidate start to machineFreeTime
-
-      // Find the best eligible operation for this machine
+    // For each free machine, try to find eligible work
+    for (const machine of freeMachines) {
       let bestAssignment: OperationAssignment | null = null;
       let bestPriority = Infinity;
 
@@ -412,7 +414,7 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
         const partReadyTime = partReadyTimeMap.get(part.id) || elapsedTimeSinceShiftStart;
 
         // Part's previous operation hasn't completed yet - can't schedule
-        if (partReadyTime > machineFreeTime) continue;
+        if (partReadyTime > currentTime) continue;
 
         const operation = activeOps[currentOpIndex];
 
@@ -422,13 +424,12 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
 
         // Try to schedule this operation on this machine
         const assignment = tryScheduleOperation(
-          part, currentOpIndex, machine, machineFreeTime,
+          part, currentOpIndex, machine, currentTime,
         );
 
         if (!assignment) continue;
 
         // Pick by priority (lower number = higher priority)
-        // If same priority, pick the one that came first (smaller part index)
         if (part.priority < bestPriority) {
           bestAssignment = assignment;
           bestPriority = part.priority;
@@ -438,41 +439,37 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       // If we found work for this machine, commit it
       if (bestAssignment) {
         commitAssignment(bestAssignment);
-        // Mark this machine as taken for this pass
-        machinesToCheck.delete(machine.machineName);
         scheduledInThisPass = true;
       }
     }
 
+    // If no work was scheduled in this pass, advance time to next event
     if (!scheduledInThisPass) {
-      iterationsWithoutWork++;
-    } else {
-      iterationsWithoutWork = 0;
-    }
-
-    // Also try to advance time: if all machines are busy and all parts waiting,
-    // we can advance to the next event time (earliest machine free or part ready)
-    if (!scheduledInThisPass) {
-      // Find earliest machine free time > current time
       let nextEventTime = productionShiftDuration;
+
+      // Find earliest machine free time > currentTime
       for (const machine of machinesData) {
         const freeTime = machineBusyUntil.get(machine.machineName) || 0;
-        if (freeTime > 0 && freeTime < nextEventTime) {
+        if (freeTime > currentTime && freeTime < nextEventTime) {
           nextEventTime = freeTime;
         }
       }
-      // Find earliest part ready time > current time
+
+      // Find earliest part ready time > currentTime
       for (const part of sortedParts) {
         const readyTime = partReadyTimeMap.get(part.id) || 0;
-        if (readyTime > 0 && readyTime < nextEventTime) {
+        if (readyTime > currentTime && readyTime < nextEventTime) {
           nextEventTime = readyTime;
         }
       }
 
-      // If no event is beyond current time but before shift end, we're done
+      // If no future events, we're done
       if (nextEventTime >= productionShiftDuration) {
         break;
       }
+
+      // Advance time to the next event
+      currentTime = nextEventTime;
     }
   }
 
@@ -487,7 +484,7 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       productionPlan.push({
         partName: part.partName,
         operationName: operation.stepName,
-        machineName: assignment.bestMachine?.machineName || '',
+        machineName: assignment.bestMachine.machineName,
         quantity: 0,
         startTime: seg.start,
         endTime: seg.end,
@@ -501,9 +498,6 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       (sum, seg) => sum + (seg.end - seg.start), 0,
     );
     let producedSoFar = 0;
-
-    // Use a local reference to avoid TypeScript issues with the bestMachine reference
-    const machineName = assignment.bestMachine?.machineName || '';
 
     for (let i = 0; i < assignment.prodAlloc.segments.length; i++) {
       const seg = assignment.prodAlloc.segments[i];
@@ -520,7 +514,7 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
       productionPlan.push({
         partName: part.partName,
         operationName: operation.stepName,
-        machineName: machineName,
+        machineName: assignment.bestMachine.machineName,
         quantity: finalQty,
         startTime: seg.start,
         endTime: seg.end,
@@ -530,9 +524,7 @@ export function runProductionScheduler(input: SchedulerInput): SchedulerOutput {
     }
 
     // Update scheduling state
-    if (assignment.bestMachine) {
-      machineBusyUntil.set(assignment.bestMachine.machineName, assignment.machineFreeAfter);
-    }
+    machineBusyUntil.set(assignment.bestMachine.machineName, assignment.machineFreeAfter);
     partReadyTimeMap.set(part.id, assignment.prodAlloc.finishTime);
     nextOpIndexMap.set(part.id, opIndex + 1);
   }
