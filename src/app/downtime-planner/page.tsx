@@ -57,7 +57,8 @@ export default function DowntimePlannerPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [shiftDuration, setShiftDuration] = useState(0);
   const [shiftStartTime, setShiftStartTime] = useState("09:00");
-  
+  const [breakTime, setBreakTime] = useState<{ start: number; end: number } | undefined>(undefined);
+
   const { toast } = useToast();
   
   const sensors = useSensors(
@@ -97,7 +98,7 @@ export default function DowntimePlannerPage() {
       setMachines(configToLoad.machinesData || initialMachines);
       setShiftDuration(configToLoad.productionShiftDuration || 0);
       setShiftStartTime(configToLoad.startTime || "09:00");
-
+      setBreakTime(configToLoad.breakTime);
 
     } catch (error) {
       console.error("Failed to load data from localStorage", error);
@@ -163,6 +164,7 @@ export default function DowntimePlannerPage() {
         productionShiftDuration: shiftDuration,
         elapsedTimeSinceShiftStart,
         currentProductionPlan: originalPlan,
+        breakTime,
       };
 
       const result = await getAdjustedProductionPlan(input as any);

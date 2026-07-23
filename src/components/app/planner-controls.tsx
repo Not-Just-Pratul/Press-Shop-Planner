@@ -49,7 +49,7 @@ export function PlannerControls({
 }: PlannerControlsProps) {
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("18:00");
-  const [breakTime, setBreakTime] = useState<BreakTime>({ start: "12:30", end: "13:00"});
+  const [breakTime, setBreakTime] = useState<BreakTime>({ start: "13:00", end: "13:30"});
   const [replanTime, setReplanTime] = useState("");
   const [constraints, setConstraints] = useState<Constraint[]>([]);
 

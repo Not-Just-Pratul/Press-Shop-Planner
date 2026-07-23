@@ -60,11 +60,25 @@ export interface ProductionPlanItem {
   startTime: number;
   endTime: number;
   taskType: 'Die Setting' | 'Production';
+  executionOrder?: number;
 }
+
+export type ProductionPlanMetrics = {
+  totalPartsRequired: number;
+  totalPartsProduced: number;
+  totalPartsRemaining: number;
+  fullyCompletedPartsCount: number;
+  totalPartsCount: number;
+  incompletePartsCount: number;
+  overallProgressPercentage: number;
+  estimatedCompletionTimeMinutes: number;
+  pendingOperations: Array<{ partName: string; operationName: string; reason: string }>;
+};
 
 export type ProductionPlan = {
   productionPlan: ProductionPlanItem[];
   summary: string;
+  metrics?: ProductionPlanMetrics;
 };
 
 export interface PlanInsightsOutput {
@@ -103,9 +117,11 @@ export type DiscrepancyReport = DiscrepancyReportOutput;
 export type GenerateProductionPlanOutput = {
   productionPlan: ProductionPlanItem[];
   summary: string;
+  metrics?: ProductionPlanMetrics;
 };
 
 export type GenerateAdjustedPlanOutput = {
   productionPlan: ProductionPlanItem[];
   summary: string;
+  metrics?: ProductionPlanMetrics;
 };
